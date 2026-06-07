@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM API 转发管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+        h1 { font-size: 22px; margin-bottom: 20px; color: #1a1a1a; }
+        .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 20px; }
+        .card h2 { font-size: 16px; margin-bottom: 14px; color: #555; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        th { color: #888; font-weight: 600; font-size: 13px; }
+        tr:hover td { background: #fafafa; }
+        .form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 12px; color: #888; font-weight: 600; }
+        .form-group input { padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; width: 180px; }
+        .form-group input:focus { outline: none; border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.2); }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: 600; }
+        .btn-primary { background: #4a90d9; color: #fff; }
+        .btn-primary:hover { background: #3a7bc8; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-link { background: none; color: #4a90d9; padding: 4px 8px; }
+        .btn-link:hover { background: #eef4fb; border-radius: 4px; }
+        .actions { display: flex; gap: 6px; }
+        .editable-cell { display: flex; gap: 6px; align-items: center; }
+        .editable-cell input { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; width: 100%; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 10px 20px; border-radius: 6px; color: #fff; font-size: 14px; z-index: 999; animation: fadeIn 0.3s; }
+        .toast-success { background: #27ae60; }
+        .toast-error { background: #e74c3c; }
+        .empty { text-align: center; color: #aaa; padding: 30px 0; font-size: 14px; }
+        .endpoint-info { font-size: 13px; color: #888; line-height: 1.6; }
+        .endpoint-info code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LLM API 转发管理</h1>
+
+        <div class="card">
+            <h2>接口说明</h2>
+            <div class="endpoint-info">
+                <p><strong>转发接口：</strong><code>POST /chat/completions</code></p>
+                <p>请求体：<code>{"vendor": "openrouter|claude|gemini|grok|gpt", "modelName": "...", "msgBody": {...}}</code></p>
+                <p>Header：<code>Authorization: Bearer &lt;api-key&gt;</code></p>
+                <p>根据 vendor 自动路由到对应第三方 API，直接转发请求并返回结果。</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>添加厂家</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>域名</label>
+                    <input id="addDomain" placeholder="api.openai.com">
+                </div>
+                <div class="form-group">
+                    <label>厂家名称</label>
+                    <input id="addName" placeholder="OpenAI">
+                </div>
+                <div class="form-group">
+                    <label>备注</label>
+                    <input id="addNotes" placeholder="GPT系列模型">
+                </div>
+                <button class="btn btn-primary" onclick="addCompany()">添加</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>厂家列表</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:5%">#</th>
+                        <th style="width:25%">域名</th>
+                        <th style="width:18%">厂家名称</th>
+                        <th style="width:32%">备注</th>
+                        <th style="width:20%">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+            <div id="emptyMsg" class="empty" style="display:none">暂无厂家，请添加</div>
+        </div>
+    </div>
+
+    <script>
+        const tbody = document.getElementById('tableBody');
+        const emptyMsg = document.getElementById('emptyMsg');
+
+        function toast(msg, ok = true) {
+            const el = document.createElement('div');
+            el.className = 'toast ' + (ok ? 'toast-success' : 'toast-error');
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 2500);
+        }
+
+        async function loadList() {
+            const res = await fetch('/api/companlist');
+            const data = await res.json();
+            if (data.length === 0) {
+                tbody.innerHTML = '';
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            emptyMsg.style.display = 'none';
+            tbody.innerHTML = data.map((c, i) => `
+                <tr>
+                    <td>${i}</td>
+                    <td><span class="cell-val">${esc(c.domain)}</span></td>
+                    <td><span class="cell-val">${esc(c.name)}</span></td>
+                    <td><span class="cell-val">${esc(c.notes)}</span></td>
+                    <td class="actions">
+                        <button class="btn btn-link btn-sm" onclick="startEdit(${i}, this)">编辑</button>
+                        <button class="btn btn-danger btn-sm" onclick="delCompany(${i})">删除</button>
+                    </td>
+                </tr>
+            `);
+        }
+
+        function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        function startEdit(idx, btn) {
+            const row = btn.closest('tr');
+            const cells = row.querySelectorAll('.cell-val');
+            const fields = ['domain', 'name', 'notes'];
+            const values = Array.from(cells).map(c => c.textContent);
+            fields.forEach((f, j) => {
+                cells[j].innerHTML = `<input value="${esc(values[j])}" id="edit_${f}_${idx}">`;
+            });
+            const actionsTd = row.querySelector('.actions');
+            actionsTd.innerHTML = `
+                <button class="btn btn-primary btn-sm" onclick="saveEdit(${idx})">保存</button>
+                <button class="btn btn-link btn-sm" onclick="loadList()">取消</button>
+            `;
+        }
+
+        async function saveEdit(idx) {
+            const body = {
+                domain: document.getElementById(`edit_domain_${idx}`).value.trim(),
+                name: document.getElementById(`edit_name_${idx}`).value.trim(),
+                notes: document.getElementById(`edit_notes_${idx}`).value.trim(),
+            };
+            if (!body.domain || !body.name) { toast('域名和名称不能为空', false); return; }
+            const res = await fetch(`/api/companlist/${idx}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (res.ok) { toast('已更新'); loadList(); } else { toast('更新失败', false); }
+        }
+
+        async function addCompany() {
+            const body = {
+                domain: document.getElementById('addDomain').value.trim(),
+                name: document.getElementById('addName').value.trim(),
+                notes: document.getElementById('addNotes').value.trim(),
+            };
+            if (!body.domain || !body.name) { toast('域名和名称不能为空', false); return; }
+            const res = await fetch('/api/companlist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (res.ok) {
+                toast('已添加');
+                document.getElementById('addDomain').value = '';
+                document.getElementById('addName').value = '';
+                document.getElementById('addNotes').value = '';
+                loadList();
+            } else { toast('添加失败', false); }
+        }
+
+        async function delCompany(idx) {
+            if (!confirm('确认删除？')) return;
+            const res = await fetch(`/api/companlist/${idx}`, { method: 'DELETE' });
+            if (res.ok) { toast('已删除'); loadList(); } else { toast('删除失败', false); }
+        }
+
+        loadList();
+    </script>
+</body>
+</html>

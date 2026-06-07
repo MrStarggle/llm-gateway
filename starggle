@@ -1,0 +1,33 @@
+#!/bin/bash
+# Starggle 服务管理脚本
+
+SERVICE_NAME="starggle"
+SERVICE_FILE="/home/installedAPP/StarggleAPI/starggle.service"
+SYSTEMD_DIR="/etc/systemd/system/"
+
+case "$1" in
+  start)
+    echo ">>> 安装/更新服务文件并启动 ${SERVICE_NAME} ..."
+    sudo cp "$SERVICE_FILE" "$SYSTEMD_DIR"
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME"
+    ;;
+  reload)
+    echo ">>> 重启 ${SERVICE_NAME} ..."
+    sudo systemctl restart "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME"
+    ;;
+  stop)
+    echo ">>> 停止 ${SERVICE_NAME} ..."
+    sudo systemctl stop "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME"
+    ;;
+  showlog)
+    echo ">>> 实时查看 ${SERVICE_NAME} 日志 (Ctrl+C 退出)..."
+    sudo journalctl -u "$SERVICE_NAME" -f
+    ;;
+  *)
+    echo "用法: $0 {start|reload|stop|showlog}"
+    exit 1
+esac
