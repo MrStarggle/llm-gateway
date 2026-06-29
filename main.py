@@ -1,11 +1,12 @@
 import logging
+import re
 import time
 from enum import Enum
-from typing import Optional
+from typing import AsyncGenerator, Optional
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
@@ -141,7 +142,39 @@ async def delete_company(index: int):
     return {"message": "ok"}
 
 
+# ---------- 模型名称校验 ----------
+_MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
+
+
+def _validate_model_name(name: str) -> str:
+    """校验 model 名称，防止路径注入 / SSRF.
+
+    允许 ``/``（如 ``deepseek/deepseek-v4-flash``），
+    拒绝 ``..``（目录穿越）、``?``、``#`` 及空白/换行符。
+    """
+    if not name or not _MODEL_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="非法 model 名称")
+    if ".." in name:
+        raise HTTPException(status_code=400, detail="非法 model 名称")
+    return name
+
+
 # ---------- 模型调用转发 ----------
+async def _close_safely(obj: Optional[object]) -> None:
+    """安全关闭 httpx 客户端或响应，避免 finally 中异常覆盖原始错误."""
+    if obj is not None and hasattr(obj, "aclose"):
+        try:
+            await obj.aclose()
+        except Exception:
+            pass
+
+
+async def _stream_aiter_bytes(resp: httpx.Response) -> AsyncGenerator[bytes, None]:
+    """将 httpx 流式响应逐块 yield 为 bytes（SSE 透传）."""
+    async for chunk in resp.aiter_bytes():
+        yield chunk
+
+
 @app.post("/{vendor}/chat/completions")
 async def call_model(vendor: Vendor, request: Request, authorization: Optional[str] = Header(None)):
     t0 = time.perf_counter()
@@ -154,12 +187,18 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
         raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
 
     body = await request.json()
-    body["stream"] = False
-    model_name = body.get("model", "unknown")
+    model_name = _validate_model_name(body.get("model", ""))
     url = cfg.get("url", "").format(model=model_name)
+    is_stream = body.get("stream", False)
 
-    logger.info(f"POST /{vendor.value}/chat/completions -> model={model_name} body={body}")
-    logger.info(f"POST /{vendor.value}/chat/completions -> forwarding to {url} with auth_header={cfg['auth_header']} api_key_len={len(api_key)}")
+    logger.info(
+        "POST /%s/chat/completions -> model=%s stream=%s",
+        vendor.value, model_name, is_stream,
+    )
+    logger.info(
+        "POST /%s/chat/completions -> forwarding to %s auth_header=%s api_key_len=%d",
+        vendor.value, url, cfg["auth_header"], len(api_key),
+    )
 
     fwd_headers = {
         cfg["auth_header"]: cfg["auth_prefix"] + api_key,
@@ -168,12 +207,78 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
     if "extra_headers" in cfg:
         fwd_headers.update(cfg["extra_headers"])
 
+    # ---------- 流式转发 ----------
+    if is_stream:
+        client: Optional[httpx.AsyncClient] = None
+        resp: Optional[httpx.Response] = None
+        stream_timeout = httpx.Timeout(300.0, read=60.0)
+
+        async def event_generator() -> AsyncGenerator[bytes, None]:
+            nonlocal client, resp
+            try:
+                client = httpx.AsyncClient(timeout=stream_timeout)
+                resp = await client.send(
+                    client.build_request("POST", url, json=body, headers=fwd_headers),
+                    stream=True,
+                )
+                logger.info(
+                    "POST /%s/chat/completions <- %d model=%s stream",
+                    vendor.value, resp.status_code, model_name,
+                )
+                if resp.status_code >= 400:
+                    error_body = await resp.aread()
+                    logger.error(
+                        "POST /%s/chat/completions <- %d model=%s stream_error body=%s",
+                        vendor.value, resp.status_code, model_name,
+                        error_body.decode("utf-8", errors="replace"),
+                    )
+                    yield (
+                        f"data: [ERROR] 上游返回 {resp.status_code}: "
+                        f"{error_body.decode('utf-8', errors='replace')}\n\n"
+                    ).encode("utf-8")
+                    return
+                async for chunk in _stream_aiter_bytes(resp):
+                    yield chunk
+            except Exception as e:
+                elapsed = (time.perf_counter() - t0) * 1000
+                logger.error(
+                    "POST /%s/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
+                    vendor.value, model_name, elapsed, str(e),
+                )
+                yield f"data: [ERROR] 流式转发失败: {str(e)}\n\n".encode("utf-8")
+            finally:
+                _close_safely(resp)
+                _close_safely(client)
+                elapsed = (time.perf_counter() - t0) * 1000
+                logger.info(
+                    "POST /%s/chat/completions <- STREAM DONE model=%s elapsed=%.0fms",
+                    vendor.value, model_name, elapsed,
+                )
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # ---------- 非流式转发 ----------
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=body, headers=fwd_headers)
             elapsed = (time.perf_counter() - t0) * 1000
             resp_text = resp.text
-            logger.info(f"POST /{vendor.value}/chat/completions <- {resp.status_code} model={model_name} elapsed={elapsed:.0f}ms body={resp_text}")
+            logger.info(
+                "POST /%s/chat/completions <- %d model=%s elapsed=%.0fms len=%d",
+                vendor.value, resp.status_code, model_name, elapsed, len(resp_text),
+            )
+            logger.debug(
+                "POST /%s/chat/completions <- body=%s",
+                vendor.value, resp_text[:500],
+            )
             try:
                 return resp.json()
             except Exception:
@@ -183,7 +288,10 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
                 )
     except Exception as e:
         elapsed = (time.perf_counter() - t0) * 1000
-        logger.error(f"POST /{vendor.value}/chat/completions <- ERROR model={model_name} elapsed={elapsed:.0f}ms error={str(e)}")
+        logger.error(
+            "POST /%s/chat/completions <- ERROR model=%s elapsed=%.0fms error=%s",
+            vendor.value, model_name, elapsed, str(e),
+        )
         raise HTTPException(status_code=502, detail=f"转发请求失败: {str(e)}")
 
 
