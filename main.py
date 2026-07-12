@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -11,6 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 
+from propmt import core_propmt_one, core_propmt_two
+
 logger = logging.getLogger("starggle")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -19,7 +22,13 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.propagate = False
 
+
 app = FastAPI(title="LLM API 转发服务 v2")
+
+
+@app.on_event("startup")
+async def _startup_log():
+    logger.debug("DEBUG 模式已开启 — 请求体将完整打印到日志")
 
 BASE_DIR = Path(__file__).resolve().parent
 COMPANLIST_FILE = BASE_DIR / "companlist.txt"
@@ -30,6 +39,9 @@ class Vendor(str, Enum):
     gemini = "gemini"
     grok = "grok"
     gpt = "gpt"
+    deepseek = "deepseek"
+    mimo = "mimo"
+    minimax = "minimax"
 
 VENDOR_CONFIG = {
     Vendor.openrouter: {
@@ -55,6 +67,21 @@ VENDOR_CONFIG = {
     },
     Vendor.gpt: {
         "url": "https://api.openai.com/v1/chat/completions",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+    },
+    Vendor.deepseek: {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+    },
+    Vendor.mimo: {
+        "url": "https://api.xiaomimimo.com/v1/chat/completions",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+    },
+    Vendor.minimax: {
+        "url": "https://api.minimaxi.com/v1/chat/completions",
         "auth_header": "Authorization",
         "auth_prefix": "Bearer ",
     },
@@ -159,6 +186,20 @@ def _validate_model_name(name: str) -> str:
     return name
 
 
+# ---------- systemPropmt 占位符替换 ----------
+def _replace_core_prompts(obj):
+    """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
+    if isinstance(obj, str):
+        obj = obj.replace("<core_propmt>", core_propmt_one())
+        obj = obj.replace("</core_propmt>", core_propmt_two())
+        return obj
+    if isinstance(obj, dict):
+        return {k: _replace_core_prompts(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_core_prompts(item) for item in obj]
+    return obj
+
+
 # ---------- 模型调用转发 ----------
 async def _close_safely(obj: Optional[object]) -> None:
     """安全关闭 httpx 客户端或响应，避免 finally 中异常覆盖原始错误."""
@@ -187,6 +228,13 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
         raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
 
     body = await request.json()
+
+    #logger.info("DEBUG request body Pre:\n%s", json.dumps(body, ensure_ascii=False, indent=2))
+
+    body = _replace_core_prompts(body)
+
+    #logger.info("DEBUG request body:\n%s", json.dumps(body, ensure_ascii=False, indent=2))
+
     model_name = _validate_model_name(body.get("model", ""))
     url = cfg.get("url", "").format(model=model_name)
     is_stream = body.get("stream", False)
@@ -247,8 +295,8 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
                 )
                 yield f"data: [ERROR] 流式转发失败: {str(e)}\n\n".encode("utf-8")
             finally:
-                _close_safely(resp)
-                _close_safely(client)
+                await _close_safely(resp)
+                await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
                 logger.info(
                     "POST /%s/chat/completions <- STREAM DONE model=%s elapsed=%.0fms",
@@ -325,13 +373,22 @@ async def get_models(vendor: str, authorization: Optional[str] = Header(None)):
             resp = await client.get(models_url, headers=headers)
             elapsed = (time.perf_counter() - t0) * 1000
             logger.info(f"POST /{vendor}/models <- {resp.status_code} elapsed={elapsed:.0f}ms")
+            if resp.status_code >= 400:
+                logger.warning(f"POST /{vendor}/models upstream error {resp.status_code}: {resp.text[:500]}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"上游获取模型列表失败 (HTTP {resp.status_code})",
+                )
             try:
                 return resp.json()
             except Exception:
+                logger.warning(f"POST /{vendor}/models upstream non-JSON response")
                 return JSONResponse(
-                    {"_raw": resp.text, "status_code": resp.status_code},
-                    status_code=resp.status_code,
+                    {"object": "list", "data": []},
+                    status_code=200,
                 )
+    except HTTPException:
+        raise  # 直接透传，避免异常消息被外层重复包装
     except Exception as e:
         elapsed = (time.perf_counter() - t0) * 1000
         logger.error(f"POST /{vendor}/models <- ERROR elapsed={elapsed:.0f}ms error={str(e)}")
@@ -348,6 +405,8 @@ async def index():
 if __name__ == "__main__":
     import uvicorn
     import asyncio
+
+    logger.debug("DEBUG 模式已开启 — 请求体将完整打印到日志")
 
     config = uvicorn.Config(app, host="0.0.0.0", port=9010)
     server = uvicorn.Server(config)

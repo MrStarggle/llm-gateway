@@ -4,3 +4,6 @@ api.anthropic.com, Anthropic, Claude系列模型
 generativelanguage.googleapis.com, Google, Gemini系列模型
 api.x.ai, xAI, Grok系列模型
 openrouter.ai, OpenRouter, 多模型路由
+api.deepseek.com, deepseek, DeepSeek深度求索
+api.minimaxi.com, minimax, MiniMax海螺AI
+api.xiaomimimo.com, mimo, 小米MiMo
