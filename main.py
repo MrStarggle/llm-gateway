@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import time
 from enum import Enum
@@ -22,13 +23,15 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.propagate = False
 
+DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
 
 app = FastAPI(title="LLM API 转发服务 v2")
 
 
 @app.on_event("startup")
 async def _startup_log():
-    logger.debug("DEBUG 模式已开启 — 请求体将完整打印到日志")
+    if DEBUG:
+        logger.info("DEBUG 模式已开启 — 请求体将完整打印到日志")
 
 BASE_DIR = Path(__file__).resolve().parent
 COMPANLIST_FILE = BASE_DIR / "companlist.txt"
@@ -229,11 +232,13 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
 
     body = await request.json()
 
-    #logger.info("DEBUG request body Pre:\n%s", json.dumps(body, ensure_ascii=False, indent=2))
+    if DEBUG:
+        logger.info("DEBUG request body (原始):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
 
     body = _replace_core_prompts(body)
 
-    #logger.info("DEBUG request body:\n%s", json.dumps(body, ensure_ascii=False, indent=2))
+    if DEBUG:
+        logger.info("DEBUG request body (替换后):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
 
     model_name = _validate_model_name(body.get("model", ""))
     url = cfg.get("url", "").format(model=model_name)
