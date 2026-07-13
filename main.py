@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 
-from propmt import core_propmt_one, core_propmt_two
+from propmt import core_propmt_one, core_propmt_two, role_core_propmt
 
 logger = logging.getLogger("starggle")
 logger.setLevel(logging.INFO)
@@ -195,6 +195,8 @@ def _replace_core_prompts(obj):
     if isinstance(obj, str):
         obj = obj.replace("<core_propmt>", core_propmt_one())
         obj = obj.replace("</core_propmt>", core_propmt_two())
+        obj = obj.replace("<role_core_propmt>", "")
+        obj = obj.replace("</role_core_propmt>", role_core_propmt())
         return obj
     if isinstance(obj, dict):
         return {k: _replace_core_prompts(v) for k, v in obj.items()}
