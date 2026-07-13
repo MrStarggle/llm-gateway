@@ -234,8 +234,8 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
 
     body = await request.json()
 
-    if DEBUG:
-        logger.info("DEBUG request body (原始):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
+    # if DEBUG:
+    #     logger.info("DEBUG request body (原始):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
 
     body = _replace_core_prompts(body)
 
