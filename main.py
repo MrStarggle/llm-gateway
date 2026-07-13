@@ -195,8 +195,8 @@ def _replace_core_prompts(obj):
     if isinstance(obj, str):
         obj = obj.replace("<core_propmt>", core_propmt_one())
         obj = obj.replace("</core_propmt>", core_propmt_two())
-        obj = obj.replace("<role_core_propmt>", "")
-        obj = obj.replace("</role_core_propmt>", role_core_propmt())
+        obj = obj.replace("<role_core_propmt>", role_core_propmt())
+        obj = obj.replace("</role_core_propmt>", "")
         return obj
     if isinstance(obj, dict):
         return {k: _replace_core_prompts(v) for k, v in obj.items()}
