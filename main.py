@@ -23,7 +23,23 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.propagate = False
 
+class Vendor(str, Enum):
+    openrouter = "openrouter"
+    claude = "claude"
+    gemini = "gemini"
+    grok = "grok"
+    gpt = "gpt"
+    deepseek = "deepseek"
+    mimo = "mimo"
+    minimax = "minimax"
+
 DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
+
+# ── 异步/非主 LLM 默认配置 ──
+# 6.5 异步 LLM 及其他后台任务使用独立的低成本模型，避免与主 LLM 争抢资源
+ASYNC_API_KEY = "sk-a54de9bf85c044f196c6d7cdbe4d5972"
+ASYNC_DEFAULT_MODEL = "deepseek-v4-flash"
+ASYNC_DEFAULT_VENDOR = Vendor.deepseek
 
 app = FastAPI(title="LLM API 转发服务 v2")
 
@@ -36,15 +52,7 @@ async def _startup_log():
 BASE_DIR = Path(__file__).resolve().parent
 COMPANLIST_FILE = BASE_DIR / "companlist.txt"
 
-class Vendor(str, Enum):
-    openrouter = "openrouter"
-    claude = "claude"
-    gemini = "gemini"
-    grok = "grok"
-    gpt = "gpt"
-    deepseek = "deepseek"
-    mimo = "mimo"
-    minimax = "minimax"
+
 
 VENDOR_CONFIG = {
     Vendor.openrouter: {
@@ -224,13 +232,30 @@ async def _stream_aiter_bytes(resp: httpx.Response) -> AsyncGenerator[bytes, Non
 @app.post("/{vendor}/chat/completions")
 async def call_model(vendor: Vendor, request: Request, authorization: Optional[str] = Header(None)):
     t0 = time.perf_counter()
-    cfg = VENDOR_CONFIG[vendor]
 
-    api_key = ""
-    if authorization:
-        api_key = authorization.removeprefix("Bearer ").strip()
-    if not api_key:
-        raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
+    # ── 识别主 LLM vs 异步 LLM ──
+    # X-Starggle-Purpose: "main" = 主 LLM（用户可见的流式生成）
+    # X-Starggle-Purpose: "async" = 异步 LLM（后台 6.5 处理、摘要、对账等）
+    # 未携带此 header 时默认走正常流程（向后兼容）
+    llm_purpose = request.headers.get("X-Starggle-Purpose", "main")
+    is_async = llm_purpose == "async"
+
+    if is_async:
+        # 非主 LLM：使用 deepseek-flash 非思考模式 + 固定 API Key
+        api_key = ASYNC_API_KEY
+        effective_vendor = ASYNC_DEFAULT_VENDOR
+        cfg = VENDOR_CONFIG[effective_vendor]
+        logger.info(
+            "POST /%s/chat/completions -> ASYNC mode, forcing vendor=%s model=%s",
+            vendor.value, effective_vendor.value, ASYNC_DEFAULT_MODEL,
+        )
+    else:
+        cfg = VENDOR_CONFIG[vendor]
+        api_key = ""
+        if authorization:
+            api_key = authorization.removeprefix("Bearer ").strip()
+        if not api_key:
+            raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
 
     body = await request.json()
 
@@ -239,6 +264,19 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
 
     body = _replace_core_prompts(body)
 
+    # 异步模式：强制覆盖 model 为 deepseek-flash，关闭思考模式
+    if is_async:
+        original_model = body.get("model", "")
+        body["model"] = ASYNC_DEFAULT_MODEL
+        # 确保思考模式关闭（deepseek-flash 非思考模式）
+        body["thinking"] = {"type": "disabled"}
+        # 移除 reasoning 字段（OpenRouter 兼容）
+        body.pop("reasoning", None)
+        logger.info(
+            "ASYNC override: model %s -> %s, thinking=disabled",
+            original_model, ASYNC_DEFAULT_MODEL,
+        )
+
     if DEBUG:
         logger.info("DEBUG request body (替换后):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
 
@@ -246,13 +284,14 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
     url = cfg.get("url", "").format(model=model_name)
     is_stream = body.get("stream", False)
 
+    effective_vendor_name = ASYNC_DEFAULT_VENDOR.value if is_async else vendor.value
     logger.info(
-        "POST /%s/chat/completions -> model=%s stream=%s",
-        vendor.value, model_name, is_stream,
+        "POST /%s/chat/completions -> model=%s stream=%s [purpose=%s]",
+        effective_vendor_name, model_name, is_stream, llm_purpose,
     )
     logger.info(
         "POST /%s/chat/completions -> forwarding to %s auth_header=%s api_key_len=%d",
-        vendor.value, url, cfg["auth_header"], len(api_key),
+        effective_vendor_name, url, cfg["auth_header"], len(api_key),
     )
 
     fwd_headers = {
@@ -270,6 +309,7 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
 
         async def event_generator() -> AsyncGenerator[bytes, None]:
             nonlocal client, resp
+            accumulated = []  # 累积所有 chunk 用于完整打印
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
                 resp = await client.send(
@@ -278,13 +318,13 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
                 )
                 logger.info(
                     "POST /%s/chat/completions <- %d model=%s stream",
-                    vendor.value, resp.status_code, model_name,
+                    effective_vendor_name, resp.status_code, model_name,
                 )
                 if resp.status_code >= 400:
                     error_body = await resp.aread()
                     logger.error(
                         "POST /%s/chat/completions <- %d model=%s stream_error body=%s",
-                        vendor.value, resp.status_code, model_name,
+                        effective_vendor_name, resp.status_code, model_name,
                         error_body.decode("utf-8", errors="replace"),
                     )
                     yield (
@@ -293,21 +333,24 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
                     ).encode("utf-8")
                     return
                 async for chunk in _stream_aiter_bytes(resp):
+                    accumulated.append(chunk)
                     yield chunk
             except Exception as e:
                 elapsed = (time.perf_counter() - t0) * 1000
                 logger.error(
                     "POST /%s/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
-                    vendor.value, model_name, elapsed, str(e),
+                    effective_vendor_name, model_name, elapsed, str(e),
                 )
                 yield f"data: [ERROR] 流式转发失败: {str(e)}\n\n".encode("utf-8")
             finally:
                 await _close_safely(resp)
                 await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
+                # 打印完整流式返回报文
+                full_body = b"".join(accumulated).decode("utf-8", errors="replace")
                 logger.info(
-                    "POST /%s/chat/completions <- STREAM DONE model=%s elapsed=%.0fms",
-                    vendor.value, model_name, elapsed,
+                    "POST /%s/chat/completions <- STREAM DONE model=%s elapsed=%.0fms\n完整流式返回报文:\n%s",
+                    effective_vendor_name, model_name, elapsed, full_body,
                 )
 
         return StreamingResponse(
@@ -328,11 +371,11 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
             resp_text = resp.text
             logger.info(
                 "POST /%s/chat/completions <- %d model=%s elapsed=%.0fms len=%d",
-                vendor.value, resp.status_code, model_name, elapsed, len(resp_text),
+                effective_vendor_name, resp.status_code, model_name, elapsed, len(resp_text),
             )
-            logger.debug(
-                "POST /%s/chat/completions <- body=%s",
-                vendor.value, resp_text[:500],
+            logger.info(
+                "POST /%s/chat/completions <- 完整返回报文:\n%s",
+                effective_vendor_name, resp_text,
             )
             try:
                 return resp.json()
@@ -345,7 +388,7 @@ async def call_model(vendor: Vendor, request: Request, authorization: Optional[s
         elapsed = (time.perf_counter() - t0) * 1000
         logger.error(
             "POST /%s/chat/completions <- ERROR model=%s elapsed=%.0fms error=%s",
-            vendor.value, model_name, elapsed, str(e),
+            effective_vendor_name, model_name, elapsed, str(e),
         )
         raise HTTPException(status_code=502, detail=f"转发请求失败: {str(e)}")
 
