@@ -1,0 +1,159 @@
+import os
+from pathlib import Path
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
+import sys
+
+# ==================== 路径配置 ====================
+BASE_DIR = Path(__file__).parent.parent.parent  # 项目根目录
+DATA_DIR = BASE_DIR / "data"
+SQL_SCHEMA_FILE = BASE_DIR / "app" / "db" / "starggle_main.sql"
+
+# ==================== MySQL 连接配置 ====================
+MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
+MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "Yang@123")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "starggle_main")
+
+# URL 编码密码中的特殊字符（如 @）
+from urllib.parse import quote_plus
+_encoded_password = quote_plus(MYSQL_PASSWORD)
+
+DATABASE_URL = (
+    f"mysql+aiomysql://{MYSQL_USER}:{_encoded_password}"
+    f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+    f"?charset=utf8mb4"
+)
+
+print(f" 数据库 URL: mysql+aiomysql://{MYSQL_USER}:***@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}")
+
+# ==================== 数据库引擎配置 ====================
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,                     # SQL 日志由应用层 logging 控制
+    pool_size=10,                   # 连接池大小
+    max_overflow=20,                # 最大溢出连接数
+    pool_pre_ping=False,            # aiomysql 不兼容 pool_pre_ping，使用 pool_recycle 兜底
+    pool_recycle=3600,              # 1 小时后回收连接
+)
+
+# 创建异步会话工厂
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+# 声明基类（用于 ORM 模型）
+Base = declarative_base()
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+# ==================== 数据库初始化 ====================
+
+def _split_sql_statements(sql_script: str) -> list[str]:
+    """将 SQL 脚本按分号拆分为独立语句，过滤空行和注释"""
+    statements = []
+    for statement in sql_script.split(";"):
+        # 去掉前导的注释行和空行（否则 -- 注释头 + CREATE TABLE 的整块会被误过滤）
+        lines = statement.strip().split("\n")
+        content_start = 0
+        for line in lines:
+            s = line.strip()
+            if s and not s.startswith("--"):
+                break
+            content_start += 1
+        if content_start < len(lines):
+            stmt = "\n".join(lines[content_start:]).strip()
+            if stmt:
+                statements.append(stmt)
+    return statements
+
+
+async def init_database():
+    """应用启动时初始化数据库：建表 + 执行 SQL 脚本 + 迁移"""
+    try:
+        # 1. ORM 模型建表
+        from app.models.model_manage_info import ModelManageInfo  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print(" ORM 表结构检查完成")
+
+        # 2. 读取并执行 SQL 建表脚本
+        if not SQL_SCHEMA_FILE.exists():
+            print(f" SQL 文件不存在，跳过: {SQL_SCHEMA_FILE}")
+        else:
+            with open(SQL_SCHEMA_FILE, 'r', encoding='utf-8') as f:
+                sql_script = f.read()
+
+            statements = _split_sql_statements(sql_script)
+            async with engine.begin() as conn:
+                for stmt in statements:
+                    try:
+                        await conn.execute(text(stmt))
+                    except Exception as e:
+                        # 表/索引已存在等预期错误，跳过
+                        print(f"  SQL 语句跳过（可能已存在）: {stmt[:60]}... ({e})")
+            print(" SQL 脚本执行完成")
+
+        # 3. 数据库迁移
+        await run_migrations()
+
+        # 4. 验证表列表
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+                    "WHERE TABLE_SCHEMA = :db AND TABLE_TYPE = 'BASE TABLE'"
+                ),
+                {"db": MYSQL_DATABASE}
+            )
+            tables = [row[0] for row in result.fetchall()]
+            print(f" 数据库中的表 ({len(tables)} 个): {tables}")
+
+        return True
+
+    except Exception as e:
+        print(f" 数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def run_migrations():
+    """执行数据库迁移，为现有表添加新字段"""
+    migrations = []
+    async with engine.begin() as conn:
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+                print(f" 迁移执行成功: {sql[:60]}...")
+            except Exception as e:
+                print(f"  迁移跳过（可能已存在）: {sql[:60]}... ({e})")
+
+    print(" 数据库迁移检查完成")
+
+
+async def check_database_connection():
+    """检查数据库连接"""
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            data = result.scalar()
+            if data == 1:
+                print(" 数据库连接正常")
+                return True
+            else:
+                print(" 数据库连接测试失败")
+                return False
+    except Exception as e:
+        print(f" 数据库连接失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False

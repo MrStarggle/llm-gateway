@@ -1,19 +1,15 @@
-import json
 import logging
 import os
-import re
-import time
-from enum import Enum
-from typing import AsyncGenerator, Optional
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import httpx
 
-from propmt import core_propmt_one, core_propmt_two, role_core_propmt
+from app.api.v1.api import api_router
 
 logger = logging.getLogger("starggle")
 logger.setLevel(logging.INFO)
@@ -23,82 +19,45 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.propagate = False
 
-class Vendor(str, Enum):
-    openrouter = "openrouter"
-    claude = "claude"
-    gemini = "gemini"
-    grok = "grok"
-    gpt = "gpt"
-    deepseek = "deepseek"
-    mimo = "mimo"
-    minimax = "minimax"
-
 DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
 
-# ── 异步/非主 LLM 默认配置 ──
-# 6.5 异步 LLM 及其他后台任务使用独立的低成本模型，避免与主 LLM 争抢资源
-ASYNC_API_KEY = "sk-a54de9bf85c044f196c6d7cdbe4d5972"
-ASYNC_DEFAULT_MODEL = "deepseek-v4-flash"
-ASYNC_DEFAULT_VENDOR = Vendor.deepseek
-
-app = FastAPI(title="LLM API 转发服务 v2")
-
-
-@app.on_event("startup")
-async def _startup_log():
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # 启动时：初始化数据库
+    from app.config.database import init_database
+    db_ok = await init_database()
+    if not db_ok:
+        logger.warning("数据库初始化未完全成功，部分功能可能不可用")
     if DEBUG:
         logger.info("DEBUG 模式已开启 — 请求体将完整打印到日志")
+    yield
+    # 关闭时：清理资源
+    from app.config.database import engine
+    await engine.dispose()
+    logger.info("数据库连接池已释放")
+
+
+app = FastAPI(title="LLM API 转发服务 v2", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://www.starggle.com"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 COMPANLIST_FILE = BASE_DIR / "companlist.txt"
 
-
-
-VENDOR_CONFIG = {
-    Vendor.openrouter: {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-    Vendor.claude: {
-        "url": "https://api.anthropic.com/v1/messages",
-        "auth_header": "x-api-key",
-        "auth_prefix": "",
-        "extra_headers": {"anthropic-version": "2023-06-01"},
-    },
-    Vendor.gemini: {
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        "auth_header": "x-goog-api-key",
-        "auth_prefix": "",
-    },
-    Vendor.grok: {
-        "url": "https://api.x.ai/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-    Vendor.gpt: {
-        "url": "https://api.openai.com/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-    Vendor.deepseek: {
-        "url": "https://api.deepseek.com/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-    Vendor.mimo: {
-        "url": "https://api.xiaomimimo.com/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-    Vendor.minimax: {
-        "url": "https://api.minimaxi.com/v1/chat/completions",
-        "auth_header": "Authorization",
-        "auth_prefix": "Bearer ",
-    },
-}
-
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# 挂载 v1 API 路由
+app.include_router(api_router, prefix="/api/v1")
+
+# 同时挂载到 /router 中间路径
+app.include_router(api_router, prefix="/router")
 
 
 # ---------- 厂家列表文件读写 ----------
@@ -180,275 +139,16 @@ async def delete_company(index: int):
     return {"message": "ok"}
 
 
-# ---------- 模型名称校验 ----------
-_MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
-
-
-def _validate_model_name(name: str) -> str:
-    """校验 model 名称，防止路径注入 / SSRF.
-
-    允许 ``/``（如 ``deepseek/deepseek-v4-flash``），
-    拒绝 ``..``（目录穿越）、``?``、``#`` 及空白/换行符。
-    """
-    if not name or not _MODEL_NAME_RE.match(name):
-        raise HTTPException(status_code=400, detail="非法 model 名称")
-    if ".." in name:
-        raise HTTPException(status_code=400, detail="非法 model 名称")
-    return name
-
-
-# ---------- systemPropmt 占位符替换 ----------
-def _replace_core_prompts(obj):
-    """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
-    if isinstance(obj, str):
-        obj = obj.replace("<core_propmt>", core_propmt_one())
-        obj = obj.replace("</core_propmt>", core_propmt_two())
-        obj = obj.replace("<role_core_propmt>", role_core_propmt())
-        obj = obj.replace("</role_core_propmt>", "")
-        return obj
-    if isinstance(obj, dict):
-        return {k: _replace_core_prompts(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_replace_core_prompts(item) for item in obj]
-    return obj
-
-
-# ---------- 模型调用转发 ----------
-async def _close_safely(obj: Optional[object]) -> None:
-    """安全关闭 httpx 客户端或响应，避免 finally 中异常覆盖原始错误."""
-    if obj is not None and hasattr(obj, "aclose"):
-        try:
-            await obj.aclose()
-        except Exception:
-            pass
-
-
-async def _stream_aiter_bytes(resp: httpx.Response) -> AsyncGenerator[bytes, None]:
-    """将 httpx 流式响应逐块 yield 为 bytes（SSE 透传）."""
-    async for chunk in resp.aiter_bytes():
-        yield chunk
-
-
-@app.post("/{vendor}/chat/completions")
-async def call_model(vendor: Vendor, request: Request, authorization: Optional[str] = Header(None)):
-    t0 = time.perf_counter()
-
-    # ── 识别主 LLM vs 异步 LLM ──
-    # X-Starggle-Purpose: "main" = 主 LLM（用户可见的流式生成）
-    # X-Starggle-Purpose: "async" = 异步 LLM（后台 6.5 处理、摘要、对账等）
-    # 未携带此 header 时默认走正常流程（向后兼容）
-    llm_purpose = request.headers.get("X-Starggle-Purpose", "main")
-    is_async = llm_purpose == "async"
-
-    if is_async:
-        # 非主 LLM：使用 deepseek-flash 非思考模式 + 固定 API Key
-        api_key = ASYNC_API_KEY
-        effective_vendor = ASYNC_DEFAULT_VENDOR
-        cfg = VENDOR_CONFIG[effective_vendor]
-        logger.info(
-            "POST /%s/chat/completions -> ASYNC mode, forcing vendor=%s model=%s",
-            vendor.value, effective_vendor.value, ASYNC_DEFAULT_MODEL,
-        )
-    else:
-        cfg = VENDOR_CONFIG[vendor]
-        api_key = ""
-        if authorization:
-            api_key = authorization.removeprefix("Bearer ").strip()
-        if not api_key:
-            raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
-
-    body = await request.json()
-
-    # if DEBUG:
-    #     logger.info("DEBUG request body (原始):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
-
-    body = _replace_core_prompts(body)
-
-    # 异步模式：强制覆盖 model 为 deepseek-flash，关闭思考模式
-    if is_async:
-        original_model = body.get("model", "")
-        body["model"] = ASYNC_DEFAULT_MODEL
-        # 确保思考模式关闭（deepseek-flash 非思考模式）
-        body["thinking"] = {"type": "disabled"}
-        # 移除 reasoning 字段（OpenRouter 兼容）
-        body.pop("reasoning", None)
-        logger.info(
-            "ASYNC override: model %s -> %s, thinking=disabled",
-            original_model, ASYNC_DEFAULT_MODEL,
-        )
-
-    if DEBUG:
-        logger.info("DEBUG request body (替换后):\n%s", json.dumps(body, ensure_ascii=False, indent=2))
-
-    model_name = _validate_model_name(body.get("model", ""))
-    url = cfg.get("url", "").format(model=model_name)
-    is_stream = body.get("stream", False)
-
-    effective_vendor_name = ASYNC_DEFAULT_VENDOR.value if is_async else vendor.value
-    logger.info(
-        "POST /%s/chat/completions -> model=%s stream=%s [purpose=%s]",
-        effective_vendor_name, model_name, is_stream, llm_purpose,
-    )
-    logger.info(
-        "POST /%s/chat/completions -> forwarding to %s auth_header=%s api_key_len=%d",
-        effective_vendor_name, url, cfg["auth_header"], len(api_key),
-    )
-
-    fwd_headers = {
-        cfg["auth_header"]: cfg["auth_prefix"] + api_key,
-        "Content-Type": "application/json",
-    }
-    if "extra_headers" in cfg:
-        fwd_headers.update(cfg["extra_headers"])
-
-    # ---------- 流式转发 ----------
-    if is_stream:
-        client: Optional[httpx.AsyncClient] = None
-        resp: Optional[httpx.Response] = None
-        stream_timeout = httpx.Timeout(300.0, read=60.0)
-
-        async def event_generator() -> AsyncGenerator[bytes, None]:
-            nonlocal client, resp
-            accumulated = []  # 累积所有 chunk 用于完整打印
-            try:
-                client = httpx.AsyncClient(timeout=stream_timeout)
-                resp = await client.send(
-                    client.build_request("POST", url, json=body, headers=fwd_headers),
-                    stream=True,
-                )
-                logger.info(
-                    "POST /%s/chat/completions <- %d model=%s stream",
-                    effective_vendor_name, resp.status_code, model_name,
-                )
-                if resp.status_code >= 400:
-                    error_body = await resp.aread()
-                    logger.error(
-                        "POST /%s/chat/completions <- %d model=%s stream_error body=%s",
-                        effective_vendor_name, resp.status_code, model_name,
-                        error_body.decode("utf-8", errors="replace"),
-                    )
-                    yield (
-                        f"data: [ERROR] 上游返回 {resp.status_code}: "
-                        f"{error_body.decode('utf-8', errors='replace')}\n\n"
-                    ).encode("utf-8")
-                    return
-                async for chunk in _stream_aiter_bytes(resp):
-                    accumulated.append(chunk)
-                    yield chunk
-            except Exception as e:
-                elapsed = (time.perf_counter() - t0) * 1000
-                logger.error(
-                    "POST /%s/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
-                    effective_vendor_name, model_name, elapsed, str(e),
-                )
-                yield f"data: [ERROR] 流式转发失败: {str(e)}\n\n".encode("utf-8")
-            finally:
-                await _close_safely(resp)
-                await _close_safely(client)
-                elapsed = (time.perf_counter() - t0) * 1000
-                # 打印完整流式返回报文
-                full_body = b"".join(accumulated).decode("utf-8", errors="replace")
-                logger.info(
-                    "POST /%s/chat/completions <- STREAM DONE model=%s elapsed=%.0fms\n完整流式返回报文:\n%s",
-                    effective_vendor_name, model_name, elapsed, full_body,
-                )
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # ---------- 非流式转发 ----------
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=body, headers=fwd_headers)
-            elapsed = (time.perf_counter() - t0) * 1000
-            resp_text = resp.text
-            logger.info(
-                "POST /%s/chat/completions <- %d model=%s elapsed=%.0fms len=%d",
-                effective_vendor_name, resp.status_code, model_name, elapsed, len(resp_text),
-            )
-            logger.info(
-                "POST /%s/chat/completions <- 完整返回报文:\n%s",
-                effective_vendor_name, resp_text,
-            )
-            try:
-                return resp.json()
-            except Exception:
-                return JSONResponse(
-                    {"_raw": resp_text, "status_code": resp.status_code},
-                    status_code=resp.status_code,
-                )
-    except Exception as e:
-        elapsed = (time.perf_counter() - t0) * 1000
-        logger.error(
-            "POST /%s/chat/completions <- ERROR model=%s elapsed=%.0fms error=%s",
-            effective_vendor_name, model_name, elapsed, str(e),
-        )
-        raise HTTPException(status_code=502, detail=f"转发请求失败: {str(e)}")
-
-
-# ---------- 模型列表获取 ----------
-@app.post("/{vendor}/models")
-async def get_models(vendor: str, authorization: Optional[str] = Header(None)):
-    t0 = time.perf_counter()
-    companies = read_companlist()
-    matched = next((c for c in companies if c["name"].lower() == vendor.lower()), None)
-    if not matched:
-        raise HTTPException(status_code=404, detail=f"未知厂家: {vendor}")
-
-    domain = matched["domain"]
-    if "openrouter" in domain:
-        models_url = f"https://{domain}/api/v1/models"
-    else:
-        models_url = f"https://{domain}/v1/models"
-
-    api_key = ""
-    if authorization:
-        api_key = authorization.removeprefix("Bearer ").strip()
-
-    logger.info(f"POST /{vendor}/models -> {models_url}")
-
-    headers = {"Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(models_url, headers=headers)
-            elapsed = (time.perf_counter() - t0) * 1000
-            logger.info(f"POST /{vendor}/models <- {resp.status_code} elapsed={elapsed:.0f}ms")
-            if resp.status_code >= 400:
-                logger.warning(f"POST /{vendor}/models upstream error {resp.status_code}: {resp.text[:500]}")
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"上游获取模型列表失败 (HTTP {resp.status_code})",
-                )
-            try:
-                return resp.json()
-            except Exception:
-                logger.warning(f"POST /{vendor}/models upstream non-JSON response")
-                return JSONResponse(
-                    {"object": "list", "data": []},
-                    status_code=200,
-                )
-    except HTTPException:
-        raise  # 直接透传，避免异常消息被外层重复包装
-    except Exception as e:
-        elapsed = (time.perf_counter() - t0) * 1000
-        logger.error(f"POST /{vendor}/models <- ERROR elapsed={elapsed:.0f}ms error={str(e)}")
-        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {str(e)}")
-
-
 # ---------- 前端页面 ----------
 @app.get("/", response_class=HTMLResponse)
 async def index():
     html_path = BASE_DIR / "templates" / "index.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/model-manage", response_class=HTMLResponse)
+async def model_manage_page():
+    html_path = BASE_DIR / "templates" / "model_manage.html"
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 

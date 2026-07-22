@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模型管理 - LLM API 转发</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        h1 { font-size: 22px; margin-bottom: 4px; color: #1a1a1a; }
+        .subtitle { font-size: 13px; color: #999; margin-bottom: 20px; }
+
+        /* 分页Tab */
+        .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid #e8e8e8; }
+        .tab-item { padding: 10px 24px; font-size: 14px; font-weight: 600; cursor: pointer; color: #999; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; user-select: none; }
+        .tab-item:hover { color: #4a90d9; }
+        .tab-item.active { color: #4a90d9; border-bottom-color: #4a90d9; }
+        .tab-badge { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+        .tab-badge.local { background: #e8f5e9; color: #2e7d32; }
+        .tab-badge.remote { background: #e3f2fd; color: #1565c0; }
+        .tab-item.active .tab-badge.local { background: #c8e6c9; }
+        .tab-item.active .tab-badge.remote { background: #bbdefb; }
+
+        .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+        .toolbar input, .toolbar select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; outline: none; }
+        .toolbar input:focus, .toolbar select:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.15); }
+        .toolbar input { width: 180px; }
+        .btn { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+        .btn-primary { background: #4a90d9; color: #fff; }
+        .btn-primary:hover { background: #3a7bc8; }
+        .btn-success { background: #27ae60; color: #fff; }
+        .btn-success:hover { background: #219a52; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-outline { background: #fff; color: #4a90d9; border: 1px solid #4a90d9; }
+        .btn-outline:hover { background: #eef4fb; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+        th { background: #fafafa; color: #666; font-weight: 600; font-size: 12px; white-space: nowrap; }
+        tr:hover td { background: #f8faff; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .tag-yes { background: #e8f5e9; color: #2e7d32; }
+        .tag-no { background: #fafafa; color: #999; }
+        .tag-think { background: #fff3e0; color: #e65100; }
+        .tag-hybrid { background: #e3f2fd; color: #1565c0; }
+        .tag-text { background: #f3e5f5; color: #7b1fa2; }
+        .tag-voice { background: #e0f2f1; color: #00695c; }
+
+        /* 胶囊开关 */
+        .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; cursor: pointer; vertical-align: middle; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; inset: 0; background: #ccc; border-radius: 24px; transition: background 0.2s; }
+        .toggle-slider::before { content: ''; position: absolute; width: 20px; height: 20px; left: 2px; bottom: 2px; background: #fff; border-radius: 50%; transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+        .toggle-switch input:checked + .toggle-slider { background: #27ae60; }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+        .toggle-switch.loading { opacity: 0.5; pointer-events: none; }
+
+        .api-key-cell { font-family: monospace; font-size: 11px; color: #999; }
+        .actions { display: flex; gap: 4px; white-space: nowrap; }
+        .empty { text-align: center; color: #bbb; padding: 40px 0; font-size: 14px; }
+
+        /* 模态框 */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.15); width: 600px; max-height: 85vh; overflow-y: auto; }
+        .modal-header { padding: 16px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: #fff; border-radius: 12px 12px 0 0; z-index: 1; }
+        .modal-header h3 { font-size: 16px; }
+        .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; padding: 4px 8px; }
+        .modal-close:hover { color: #333; }
+        .modal-body { padding: 24px; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-grid .full { grid-column: 1 / -1; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 12px; color: #666; font-weight: 600; }
+        .form-group label .req { color: #e74c3c; }
+        .form-group input, .form-group select, .form-group textarea { padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.15); }
+        .form-group textarea { resize: vertical; min-height: 60px; }
+        .radio-group { display: flex; gap: 16px; align-items: center; padding-top: 4px; }
+        .radio-group label { display: flex; align-items: center; gap: 4px; font-weight: 400; font-size: 13px; cursor: pointer; }
+        .radio-group input[type="radio"] { accent-color: #4a90d9; }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 10px; background: #fafafa; border-radius: 0 0 12px 12px; }
+
+        /* Toast */
+        .toast { position: fixed; top: 24px; right: 24px; padding: 12px 24px; border-radius: 8px; color: #fff; font-size: 14px; z-index: 200; animation: slideIn 0.3s; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .toast-success { background: #27ae60; }
+        .toast-error { background: #e74c3c; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+        .text-ellipsis { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+        .url-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; color: #4a90d9; }
+
+        /* 运营商建议下拉 */
+        .suggest-wrap { position: relative; }
+        .suggest-wrap input { padding-right: 50px; }
+        .suggest-clear { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); color: #bbb; font-size: 14px; cursor: pointer; display: none; line-height: 1; padding: 2px 4px; }
+        .suggest-clear:hover { color: #888; }
+        .suggest-clear.visible { display: block; }
+        .suggest-arrow { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999; font-size: 12px; transition: transform 0.2s; }
+        .suggest-arrow.open { transform: translateY(-50%) rotate(180deg); }
+        .suggest-list { display: none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ddd; border-radius: 0 0 6px 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10; max-height: 200px; overflow-y: auto; }
+        .suggest-list.active { display: block; }
+        .suggest-item { padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #f5f5f5; display: flex; justify-content: space-between; align-items: center; transition: background 0.1s; }
+        .suggest-item:hover { background: #eef4fb; }
+        .suggest-item:last-child { border-bottom: none; }
+        .suggest-item .s-name { font-weight: 600; color: #333; }
+        .suggest-item .s-domain { font-size: 11px; color: #999; }
+        .suggest-item .s-note { font-size: 11px; color: #bbb; }
+
+        /* 鉴权遮罩 */
+        .auth-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300; align-items: center; justify-content: center; }
+        .auth-overlay.active { display: flex; }
+        .auth-card { background: #fff; border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.25); padding: 40px 36px 28px; width: 380px; text-align: center; }
+        .auth-card .auth-icon { font-size: 40px; margin-bottom: 12px; }
+        .auth-card h2 { font-size: 18px; margin-bottom: 6px; color: #1a1a1a; }
+        .auth-card .auth-hint { font-size: 12px; color: #999; margin-bottom: 20px; }
+        .auth-card input { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; text-align: center; font-family: monospace; letter-spacing: 2px; }
+        .auth-card input:focus { border-color: #4a90d9; box-shadow: 0 0 0 3px rgba(74,144,217,0.15); }
+        .auth-card .auth-error { font-size: 12px; color: #e74c3c; margin-top: 8px; min-height: 18px; }
+        .auth-card .btn { margin-top: 16px; width: 100%; padding: 10px 0; font-size: 14px; }
+        .toolbar .btn-lock { background: #fff; color: #e67e22; border: 1px solid #e67e22; }
+        .toolbar .btn-lock:hover { background: #fef5e7; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 模型管理</h1>
+        <p class="subtitle">管理 LLM API 转发的模型配置信息</p>
+
+        <!-- 分页Tab -->
+        <div class="tab-bar">
+            <div class="tab-item active" id="tabLocal" onclick="switchTab('local')">
+                📍 本地模型<span class="tab-badge local">LOCAL</span>
+            </div>
+            <div class="tab-item" id="tabRemote" onclick="switchTab('remote')">
+                ☁️ 远程模型<span class="tab-badge remote">REMOTE</span>
+            </div>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <input id="searchName" placeholder="🔍 模型名称..." oninput="loadList()">
+            <input id="searchCom" placeholder="🔍 运营商..." oninput="loadList()">
+            <select id="filterType" onchange="loadList()">
+                <option value="">全部类型</option>
+                <option value="0">文本模型</option>
+                <option value="1">语音模型</option>
+            </select>
+            <select id="filterUsing" onchange="loadList()">
+                <option value="">全部状态</option>
+                <option value="1">使用中</option>
+                <option value="0">未使用</option>
+            </select>
+            <select id="filterBase" onchange="loadList()">
+                <option value="">基础模型</option>
+                <option value="1">是</option>
+                <option value="0">否</option>
+            </select>
+            <button class="btn btn-primary" onclick="openAdd()">+ 新增模型</button>
+            <button class="btn btn-lock btn-sm" id="btnLock" onclick="lockPage()" title="锁定管理页">🔒 锁定</button>
+        </div>
+
+        <!-- 数据表格 -->
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>模型名称</th>
+                        <th>运营商</th>
+                        <th>URL</th>
+                        <th>API Key</th>
+                        <th>类型</th>
+                        <th>使用中</th>
+                        <th>思考</th>
+                        <th>流式</th>
+                        <th>基础</th>
+                        <th>备注</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+            <div id="emptyMsg" class="empty" style="display:none">暂无模型数据，请点击"新增模型"添加</div>
+        </div>
+    </div>
+
+    <!-- 鉴权遮罩 -->
+    <div class="auth-overlay active" id="authOverlay">
+        <div class="auth-card">
+            <div class="auth-icon">🔐</div>
+            <h2>管理员登录</h2>
+            <p class="auth-hint" id="authHint">使用 StarggleChat 账号登录</p>
+            <input type="email" id="authEmail" placeholder="邮箱地址"
+                   onkeydown="if(event.key==='Enter')document.getElementById('authPassword').focus()">
+            <input type="password" id="authPassword" placeholder="密码" style="margin-top:10px;"
+                   onkeydown="if(event.key==='Enter')doUnlock()">
+            <div class="auth-error" id="authError"></div>
+            <button class="btn btn-primary" id="authBtn" onclick="doUnlock()">登 录</button>
+        </div>
+    </div>
+
+    <!-- 新增/编辑 模态框 -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">新增模型</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label><span class="req">*</span> 运营商名称</label>
+                        <div class="suggest-wrap">
+                            <input id="fComName" placeholder="选择或输入运营商..." autocomplete="off"
+                                   oninput="onComNameInput(); toggleClearBtn('suggestClear','fComName')"
+                                   onblur="onComNameBlur()" onfocus="onComNameFocus()">
+                            <span class="suggest-clear" id="suggestClear" onclick="clearComName()">✕</span>
+                            <span class="suggest-arrow" id="suggestArrow">▼</span>
+                            <div class="suggest-list" id="suggestList"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><span class="req">*</span> 运营商 URL</label>
+                        <input id="fComUrl" placeholder="例如: https://api.deepseek.com">
+                    </div>
+                    <div class="form-group">
+                        <label><span class="req">*</span> API Key</label>
+                        <input id="fApiKey" placeholder="sk-..." onblur="onApiKeyBlur()">
+                    </div>
+                    <div class="form-group">
+                        <label><span class="req">*</span> 模型名称</label>
+                        <div class="suggest-wrap">
+                            <input id="fModelName" placeholder="先填API Key自动拉取，也可手动输入..." autocomplete="off"
+                                   oninput="onModelNameInput(); toggleClearBtn('suggestClear2','fModelName')"
+                                   onfocus="onModelNameFocus()">
+                            <span class="suggest-clear" id="suggestClear2" onclick="clearModelName()">✕</span>
+                            <span class="suggest-arrow" id="suggestArrow2">▼</span>
+                            <div class="suggest-list" id="suggestList2"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>模型类型</label>
+                        <div class="radio-group">
+                            <label><input type="radio" name="fType" value="0" checked> 文本模型</label>
+                            <label><input type="radio" name="fType" value="1"> 语音模型</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>是否使用中</label>
+                        <div class="radio-group">
+                            <label><input type="radio" name="fUsing" value="1" checked> 是</label>
+                            <label><input type="radio" name="fUsing" value="0"> 否</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>思考模型</label>
+                        <select id="fThink">
+                            <option value="0">默认</option>
+                            <option value="1">思考模型</option>
+                            <option value="2">混合模型</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>流式输出</label>
+                        <div class="radio-group">
+                            <label><input type="radio" name="fStream" value="1" checked> 是</label>
+                            <label><input type="radio" name="fStream" value="0"> 否</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>基础默认模型</label>
+                        <div class="radio-group">
+                            <label><input type="radio" name="fBase" value="0" checked> 否</label>
+                            <label><input type="radio" name="fBase" value="1"> 是</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>额外配置 (JSON)</label>
+                        <textarea id="fExtraConfig" placeholder='{"voice": "alloy", "speed": 1.0}'></textarea>
+                    </div>
+                    <div class="form-group full">
+                        <label>备注</label>
+                        <textarea id="fRemarks" placeholder="可选备注信息"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal()">取消</button>
+                <button class="btn btn-primary" id="modalSubmitBtn" onclick="submitForm()">确认新增</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========== JWT 鉴权（复用 StarggleChat 账号） ==========
+        const STORAGE_KEY = 'starggle_admin_jwt';
+        let _adminToken = null;  // JWT
+
+        function checkAuth() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                _adminToken = saved;
+                document.getElementById('authOverlay').classList.remove('active');
+                document.getElementById('btnLock').style.display = '';
+                return true;
+            }
+            // 本地模式不需要登录
+            if (API_BASE === API_TARGETS['local']) {
+                document.getElementById('authOverlay').classList.remove('active');
+                document.getElementById('btnLock').style.display = 'none';
+                return true;
+            }
+            showAuthOverlay();
+            return false;
+        }
+
+        function showAuthOverlay() {
+            document.getElementById('authOverlay').classList.add('active');
+            document.getElementById('authEmail').value = '';
+            document.getElementById('authPassword').value = '';
+            document.getElementById('authError').textContent = '';
+            document.getElementById('btnLock').style.display = 'none';
+            setTimeout(() => document.getElementById('authEmail').focus(), 100);
+        }
+
+        function getLoginUrl() {
+            // 登录接口路径：本地和远程都是 /api/v1/auth/login
+            if (API_BASE === API_TARGETS['local']) {
+                return '/api/v1/auth/login';
+            }
+            return 'https://www.starggle.com/api/v1/auth/login';
+        }
+
+        async function doUnlock() {
+            const email = document.getElementById('authEmail').value.trim();
+            const pwd = document.getElementById('authPassword').value.trim();
+            const errEl = document.getElementById('authError');
+            const btn = document.getElementById('authBtn');
+
+            if (!email) { errEl.textContent = '请输入邮箱'; return; }
+            if (!pwd) { errEl.textContent = '请输入密码'; return; }
+
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            errEl.textContent = '';
+
+            try {
+                const res = await fetch(getLoginUrl(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password: pwd })
+                });
+                const result = await res.json();
+
+                if (result?.data?.success) {
+                    _adminToken = result.data.token;
+                    localStorage.setItem(STORAGE_KEY, _adminToken);
+                    document.getElementById('authOverlay').classList.remove('active');
+                    document.getElementById('btnLock').style.display = '';
+                    toast('登录成功，欢迎 ' + (result.data.user?.userName || email));
+                    loadList();
+                    preloadCompanies();
+                } else {
+                    errEl.textContent = result?.data?.message || '登录失败';
+                    document.getElementById('authPassword').value = '';
+                    document.getElementById('authPassword').focus();
+                }
+            } catch (e) {
+                errEl.textContent = '网络错误，请检查连接';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登 录';
+            }
+        }
+
+        function lockPage() {
+            _adminToken = null;
+            localStorage.removeItem(STORAGE_KEY);
+            showAuthOverlay();
+            document.getElementById('tableBody').innerHTML = '';
+            document.getElementById('emptyMsg').style.display = 'none';
+        }
+
+        // ========== 环境切换 ==========
+        const API_TARGETS = {
+            local: '/api/v1/model-manage',
+            remote: 'https://www.starggle.com/api/v1/model-manage'
+        };
+        let API_BASE = API_TARGETS['local'];
+
+        function switchTab(target) {
+            API_BASE = API_TARGETS[target];
+            document.getElementById('tabLocal').classList.toggle('active', target === 'local');
+            document.getElementById('tabRemote').classList.toggle('active', target === 'remote');
+            _allCompanies = null;
+            _modelCache = [];
+            // 切到远程时需要重新鉴权
+            checkAuth();
+            preloadCompanies();
+            loadList();
+        }
+
+        // ========== 通用工具 ==========
+        function toast(msg, ok = true) {
+            const el = document.createElement('div');
+            el.className = 'toast ' + (ok ? 'toast-success' : 'toast-error');
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 2500);
+        }
+
+        function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        function maskApiKey(key) {
+            if (!key) return '';
+            if (key.length <= 8) return '****';
+            return key.substring(0, 4) + '****' + key.substring(key.length - 4);
+        }
+
+        function typeTag(t) {
+            return t === '1' ? '<span class="tag tag-voice">语音</span>' : '<span class="tag tag-text">文本</span>';
+        }
+
+        function boolTag(v, yesClass, noClass) {
+            const cls = v === '1' ? (yesClass || 'tag-yes') : (noClass || 'tag-no');
+            const text = v === '1' ? '是' : '否';
+            return `<span class="tag ${cls}">${text}</span>`;
+        }
+
+        function thinkTag(v) {
+            if (v === '1') return '<span class="tag tag-think">思考</span>';
+            if (v === '2') return '<span class="tag tag-hybrid">混合</span>';
+            return '<span class="tag tag-no">默认</span>';
+        }
+
+        async function api(method, path, body) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (_adminToken) headers['Authorization'] = 'Bearer ' + _adminToken;
+            const opts = { method, headers };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(API_BASE + path, opts);
+            if (res.status === 401) {
+                // Token 过期或无效，弹出登录
+                showAuthOverlay();
+                throw new Error('Unauthorized');
+            }
+            return res.json();
+        }
+
+        async function loadList() {
+            const params = new URLSearchParams();
+            const v = (id) => document.getElementById(id)?.value || '';
+            if (v('searchName')) params.set('ai_model_name', v('searchName'));
+            if (v('searchCom')) params.set('com_name', v('searchCom'));
+            if (v('filterType')) params.set('ai_model_type', v('filterType'));
+            if (v('filterUsing')) params.set('is_using', v('filterUsing'));
+            if (v('filterBase')) params.set('is_base', v('filterBase'));
+
+            const qs = params.toString();
+            const result = await api('GET', '/list' + (qs ? '?' + qs : ''));
+            const list = result?.data?.list || [];
+
+            const tbody = document.getElementById('tableBody');
+            const emptyMsg = document.getElementById('emptyMsg');
+
+            if (list.length === 0) {
+                tbody.innerHTML = '';
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            emptyMsg.style.display = 'none';
+
+            tbody.innerHTML = list.map(m => `
+                <tr>
+                    <td><strong>${esc(m.aiModelName)}</strong></td>
+                    <td>${esc(m.comName)}</td>
+                    <td><span class="url-cell" title="${esc(m.comUrl)}">${esc(m.comUrl)}</span></td>
+                    <td><span class="api-key-cell" title="${esc(m.apiKey)}">${maskApiKey(m.apiKey)}</span></td>
+                    <td>${typeTag(m.aiModelType)}</td>
+                    <td><label class="toggle-switch" onclick="toggleUsing('${esc(m.aiModelId)}', this)">
+                        <input type="checkbox" ${m.isUsing === '1' ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label></td>
+                    <td>${thinkTag(m.isThink)}</td>
+                    <td>${boolTag(m.isStream)}</td>
+                    <td>${boolTag(m.isBase, 'tag-think', 'tag-no')}</td>
+                    <td><span class="text-ellipsis" title="${esc(m.remarks)}">${esc(m.remarks)}</span></td>
+                    <td class="actions">
+                        <button class="btn btn-outline btn-sm" onclick="openEdit('${esc(m.aiModelId)}')">编辑</button>
+                        <button class="btn btn-danger btn-sm" onclick="delModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function openAdd() {
+            document.getElementById('modalTitle').textContent = '新增模型';
+            document.getElementById('modalSubmitBtn').textContent = '确认新增';
+            document.getElementById('editId').value = '';
+            clearForm();
+            document.getElementById('modalOverlay').classList.add('active');
+        }
+
+        async function openEdit(id) {
+            const result = await api('GET', '/' + id);
+            const m = result?.data;
+            if (!m) { toast('获取模型详情失败', false); return; }
+
+            document.getElementById('modalTitle').textContent = '编辑模型';
+            document.getElementById('modalSubmitBtn').textContent = '保存修改';
+            document.getElementById('editId').value = m.aiModelId;
+
+            document.getElementById('fModelName').value = m.aiModelName || '';
+            document.getElementById('fComName').value = m.comName || '';
+            document.getElementById('fComUrl').value = m.comUrl || '';
+            document.getElementById('fApiKey').value = m.apiKey || '';
+            toggleClearBtn('suggestClear', 'fComName');
+            toggleClearBtn('suggestClear2', 'fModelName');
+            setRadio('fType', m.aiModelType);
+            setRadio('fUsing', m.isUsing);
+            document.getElementById('fThink').value = m.isThink || '0';
+            setRadio('fStream', m.isStream);
+            setRadio('fBase', m.isBase);
+            document.getElementById('fExtraConfig').value = m.extraConfig || '';
+            document.getElementById('fRemarks').value = m.remarks || '';
+
+            document.getElementById('modalOverlay').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.remove('active');
+        }
+
+        function clearForm() {
+            document.getElementById('fModelName').value = '';
+            document.getElementById('fComName').value = '';
+            document.getElementById('fComUrl').value = '';
+            document.getElementById('fApiKey').value = '';
+            document.getElementById('suggestClear').classList.remove('visible');
+            document.getElementById('suggestClear2').classList.remove('visible');
+            _modelCache = [];
+            setRadio('fType', '0');
+            setRadio('fUsing', '1');
+            document.getElementById('fThink').value = '0';
+            setRadio('fStream', '1');
+            setRadio('fBase', '0');
+            document.getElementById('fExtraConfig').value = '';
+            document.getElementById('fRemarks').value = '';
+        }
+
+        function setRadio(name, value) {
+            const radios = document.getElementsByName(name);
+            for (const r of radios) { r.checked = r.value === (value || '0'); }
+        }
+
+        function getRadio(name) {
+            const radios = document.getElementsByName(name);
+            for (const r of radios) { if (r.checked) return r.value; }
+            return '0';
+        }
+
+        async function submitForm() {
+            const editId = document.getElementById('editId').value;
+            const body = {
+                ai_model_name: document.getElementById('fModelName').value.trim(),
+                com_name: document.getElementById('fComName').value.trim(),
+                com_url: document.getElementById('fComUrl').value.trim(),
+                api_key: document.getElementById('fApiKey').value.trim(),
+                ai_model_type: getRadio('fType'),
+                is_using: getRadio('fUsing'),
+                is_think: document.getElementById('fThink').value,
+                is_stream: getRadio('fStream'),
+                is_base: getRadio('fBase'),
+                extra_config: document.getElementById('fExtraConfig').value.trim() || null,
+                remarks: document.getElementById('fRemarks').value.trim() || null,
+            };
+
+            if (!body.ai_model_name || !body.com_name || !body.com_url || !body.api_key) {
+                toast('请填写所有必填字段（模型名称、运营商、URL、API Key）', false);
+                return;
+            }
+
+            let result;
+            if (editId) {
+                result = await api('PUT', '/' + editId, body);
+            } else {
+                result = await api('POST', '/', body);
+            }
+
+            if (result.code === 200 || result.code === 201) {
+                toast(editId ? '更新成功' : '新增成功');
+                closeModal();
+                loadList();
+            } else {
+                toast(result.message || '操作失败', false);
+            }
+        }
+
+        async function delModel(id, name) {
+            if (!confirm(`确认删除模型 "${name}"？此操作不可撤销。`)) return;
+            const result = await api('DELETE', '/' + id);
+            if (result.code === 200) {
+                toast('删除成功');
+                loadList();
+            } else {
+                toast(result.message || '删除失败', false);
+            }
+        }
+
+        // 胶囊开关：实时切换"使用中"状态
+        async function toggleUsing(id, labelEl) {
+            const checkbox = labelEl.querySelector('input');
+            const newVal = checkbox.checked ? '1' : '0';
+            labelEl.classList.add('loading');
+            const result = await api('PUT', '/' + id, { is_using: newVal });
+            labelEl.classList.remove('loading');
+            if (result.code === 200) {
+                toast(newVal === '1' ? '已启用' : '已停用');
+            } else {
+                // 失败时还原开关
+                checkbox.checked = !checkbox.checked;
+                toast(result.message || '更新失败', false);
+            }
+        }
+
+        // 清空按钮（通用）
+        function toggleClearBtn(btnId, inputId) {
+            const input = document.getElementById(inputId);
+            const btn = document.getElementById(btnId);
+            btn.classList.toggle('visible', input.value.trim().length > 0);
+        }
+        function clearComName() {
+            document.getElementById('fComName').value = '';
+            document.getElementById('fComUrl').value = '';
+            document.getElementById('suggestClear').classList.remove('visible');
+            document.getElementById('suggestList').classList.remove('active');
+            document.getElementById('suggestArrow').classList.remove('open');
+            document.getElementById('fComName').focus();
+        }
+        function clearModelName() {
+            document.getElementById('fModelName').value = '';
+            document.getElementById('suggestClear2').classList.remove('visible');
+            document.getElementById('suggestList2').classList.remove('active');
+            document.getElementById('suggestArrow2').classList.remove('open');
+            document.getElementById('fModelName').focus();
+        }
+
+        // ========== API Key 失焦自动拉取模型列表 ==========
+        async function onApiKeyBlur() {
+            const url = document.getElementById('fComUrl').value.trim();
+            const apiKey = document.getElementById('fApiKey').value.trim();
+            if (!url || !apiKey) return;
+
+            const modelInput = document.getElementById('fModelName');
+            if (modelInput.value.trim()) return;
+
+            try {
+                const result = await api('POST', '/fetch-models', { com_url: url, api_key: apiKey });
+                const models = result?.data?.models || [];
+                if (models.length > 0) {
+                    _modelCache = models;
+                    showModelSuggestions(models);
+                }
+            } catch (e) {
+                // 静默失败，用户可手动输入
+            }
+        }
+
+        // ========== 运营商名称下拉选择 + 手填 ==========
+        let _allCompanies = null;
+        let _suggestTimer = null;
+
+        async function preloadCompanies() {
+            try {
+                const result = await api('GET', '/company-search?name=');
+                _allCompanies = result?.data?.matches || [];
+            } catch (e) {
+                _allCompanies = [];
+            }
+        }
+
+        function _filterCompanies(query) {
+            if (!_allCompanies) return [];
+            const q = query.toLowerCase();
+            return _allCompanies.filter(c =>
+                c.name.toLowerCase().includes(q) || c.domain.toLowerCase().includes(q)
+            ).slice(0, 8);
+        }
+
+        function onComNameFocus() {
+            const input = document.getElementById('fComName');
+            const arrow = document.getElementById('suggestArrow');
+            if (!input.value.trim() && _allCompanies && _allCompanies.length > 0) {
+                renderSuggestions(_allCompanies.slice(0, 8), true);
+                arrow.classList.add('open');
+            } else {
+                onComNameInput();
+            }
+        }
+
+        function onComNameInput() {
+            const input = document.getElementById('fComName');
+            const name = input.value.trim();
+            const listEl = document.getElementById('suggestList');
+            const arrow = document.getElementById('suggestArrow');
+
+            if (name.length === 0) {
+                if (_allCompanies && _allCompanies.length > 0) {
+                    renderSuggestions(_allCompanies.slice(0, 8), true);
+                    arrow.classList.add('open');
+                }
+                return;
+            }
+
+            const localMatches = _filterCompanies(name);
+            if (localMatches.length > 0) {
+                renderSuggestions(localMatches, false);
+                arrow.classList.add('open');
+                return;
+            }
+
+            clearTimeout(_suggestTimer);
+            _suggestTimer = setTimeout(async () => {
+                const currentName = document.getElementById('fComName').value.trim();
+                if (currentName !== name) return;
+                try {
+                    const result = await api('GET', '/company-search?name=' + encodeURIComponent(name));
+                    const matches = result?.data?.matches || [];
+                    renderSuggestions(matches, false);
+                    arrow.classList.add('open');
+                } catch (e) {
+                    listEl.classList.remove('active');
+                    arrow.classList.remove('open');
+                }
+            }, 300);
+        }
+
+        function renderSuggestions(matches, showAll) {
+            const listEl = document.getElementById('suggestList');
+            const arrow = document.getElementById('suggestArrow');
+            if (!matches || matches.length === 0) {
+                listEl.classList.remove('active');
+                arrow.classList.remove('open');
+                return;
+            }
+            listEl.innerHTML = matches.map((c, i) => `
+                <div class="suggest-item" onmousedown="selectCompany(${i})">
+                    <span class="s-name">${esc(c.name)}</span>
+                    <span class="s-domain">${esc(c.domain)}</span>
+                </div>
+            `).join('');
+            listEl.classList.add('active');
+            arrow.classList.add('open');
+            listEl._matches = matches;
+        }
+
+        function selectCompany(idx) {
+            const listEl = document.getElementById('suggestList');
+            const arrow = document.getElementById('suggestArrow');
+            const matches = listEl._matches || [];
+            const c = matches[idx];
+            if (!c) return;
+            document.getElementById('fComName').value = c.name;
+            let url = c.domain;
+            if (!url.startsWith('http')) {
+                url = 'https://' + url;
+            }
+            document.getElementById('fComUrl').value = url;
+            document.getElementById('suggestClear').classList.add('visible');
+            listEl.classList.remove('active');
+            arrow.classList.remove('open');
+        }
+
+        function onComNameBlur() {
+            setTimeout(() => {
+                const listEl = document.getElementById('suggestList');
+                const arrow = document.getElementById('suggestArrow');
+                listEl.classList.remove('active');
+                arrow.classList.remove('open');
+
+                const input = document.getElementById('fComName');
+                const name = input.value.trim();
+                if (name.length < 4) return;
+
+                const urlEl = document.getElementById('fComUrl');
+                if (urlEl.value.trim()) return;
+
+                const local = _filterCompanies(name);
+                const best = local[0] || _allCompanies?.find(c =>
+                    c.name.toLowerCase().includes(name.toLowerCase())
+                );
+                if (best) {
+                    let url = best.domain;
+                    if (!url.startsWith('http')) url = 'https://' + url;
+                    urlEl.value = url;
+                }
+            }, 200);
+        }
+
+        document.addEventListener('click', function(e) {
+            if (e.target.id === 'suggestArrow') {
+                const input = document.getElementById('fComName');
+                const listEl = document.getElementById('suggestList');
+                if (listEl.classList.contains('active')) {
+                    listEl.classList.remove('active');
+                    document.getElementById('suggestArrow').classList.remove('open');
+                } else {
+                    input.focus();
+                }
+            }
+            if (e.target.id === 'suggestArrow2') {
+                const input = document.getElementById('fModelName');
+                const listEl = document.getElementById('suggestList2');
+                if (listEl.classList.contains('active')) {
+                    listEl.classList.remove('active');
+                    document.getElementById('suggestArrow2').classList.remove('open');
+                } else {
+                    input.focus();
+                }
+            }
+        });
+
+        // ========== 模型名称下拉选择 ==========
+        let _modelCache = [];
+
+        function showModelSuggestions(models) {
+            const listEl = document.getElementById('suggestList2');
+            const arrow = document.getElementById('suggestArrow2');
+            if (!models || models.length === 0) {
+                listEl.classList.remove('active');
+                arrow.classList.remove('open');
+                return;
+            }
+            const show = models.slice(0, 15);
+            listEl.innerHTML = show.map((m, i) => `
+                <div class="suggest-item" onmousedown="selectModel(${i})">
+                    <span class="s-name">${esc(m)}</span>
+                </div>
+            `).join('');
+            listEl.classList.add('active');
+            arrow.classList.add('open');
+            listEl._models = show;
+        }
+
+        function onModelNameFocus() {
+            const input = document.getElementById('fModelName');
+            const arrow = document.getElementById('suggestArrow2');
+            if (!input.value.trim() && _modelCache.length > 0) {
+                showModelSuggestions(_modelCache);
+            } else if (input.value.trim()) {
+                filterModelSuggestions(input.value.trim());
+            }
+        }
+
+        function onModelNameInput() {
+            const name = document.getElementById('fModelName').value.trim();
+            toggleClearBtn('suggestClear2', 'fModelName');
+            if (name.length === 0 && _modelCache.length > 0) {
+                showModelSuggestions(_modelCache);
+            } else {
+                filterModelSuggestions(name);
+            }
+        }
+
+        function filterModelSuggestions(query) {
+            if (!query) {
+                if (_modelCache.length > 0) showModelSuggestions(_modelCache);
+                return;
+            }
+            const q = query.toLowerCase();
+            const filtered = _modelCache.filter(m => m.toLowerCase().includes(q));
+            showModelSuggestions(filtered);
+        }
+
+        function selectModel(idx) {
+            const listEl = document.getElementById('suggestList2');
+            const arrow = document.getElementById('suggestArrow2');
+            const models = listEl._models || [];
+            const m = models[idx];
+            if (!m) return;
+            document.getElementById('fModelName').value = m;
+            document.getElementById('suggestClear2').classList.add('visible');
+            listEl.classList.remove('active');
+            arrow.classList.remove('open');
+        }
+
+        document.getElementById('modalOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+
+        // 初始加载：先校验 Token，通过后再拉数据
+        if (checkAuth()) {
+            preloadCompanies();
+            loadList();
+        }
+    </script>
+</body>
+</html>

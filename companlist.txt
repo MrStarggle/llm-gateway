@@ -7,3 +7,23 @@ openrouter.ai, OpenRouter, 多模型路由
 api.deepseek.com, deepseek, DeepSeek深度求索
 api.minimaxi.com, minimax, MiniMax海螺AI
 api.xiaomimimo.com, mimo, 小米MiMo
+api.mistral.ai, Mistral, Mistral AI模型
+api.cohere.com, Cohere, Command系列模型
+api.ai21.com, AI21, Jurassic系列模型
+api.together.xyz, Together, Together AI开源模型平台
+api.fireworks.ai, Fireworks, Fireworks AI推理平台
+api.perplexity.ai, Perplexity, Perplexity搜索增强模型
+api.replicate.com, Replicate, Replicate托管模型
+api.groq.com, Groq, Groq高速推理LPU
+api.baichuan-ai.com, 百川, 百川大模型
+api.moonshot.cn, Moonshot, 月之暗面Kimi
+dashscope.aliyuncs.com, 阿里通义, 通义千问系列模型
+api.siliconflow.cn, SiliconFlow, 硅基流动开源模型平台
+api.zhipuai.cn, 智谱, ChatGLM系列模型
+api.baidu.com, 百度, 文心一言ERNIE系列模型
+api.volcengine.com, 字节豆包, 豆包系列模型
+api.stepfun.com, 阶跃星辰, Step系列模型
+api.minimax.chat, MiniMax, MiniMax开放平台
+api.lingyiwanwu.com, 零一万物, Yi系列模型
+api.deepseek.com, DeepSeek, DeepSeek深度求索
+api.01.ai, 零一万物, Yi系列模型国际版
