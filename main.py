@@ -11,13 +11,12 @@ from pydantic import BaseModel
 
 from app.api.v1.api import api_router
 
-logger = logging.getLogger("starggle")
+logger = logging.getLogger()  # root logger — 让所有模块的日志都能输出
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(message)s", "%Y-%m-%d %H:%M:%S"))
     logger.addHandler(handler)
-logger.propagate = False
 
 DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
 

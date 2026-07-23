@@ -4,6 +4,7 @@
 - POST /chat/completions — 转发聊天补全请求（支持流式/非流式）
 - POST /models — 从上游 API 获取可用模型列表
 """
+import json
 import logging
 import re
 import time
@@ -222,6 +223,13 @@ async def chat_completions(
     body = await request.json()
     body = _replace_core_prompts(body)
 
+    # DEBUG：打印完整请求报文
+    if DEBUG:
+        logger.info(
+            "POST /call-manage/chat/completions -> 请求报文:\n%s",
+            json.dumps(body, ensure_ascii=False, indent=2),
+        )
+
     # 异步模式：关闭思考模式（兼容 deepseek 等推理模型）
     if is_async:
         body["thinking"] = {"type": "disabled"}
@@ -242,7 +250,13 @@ async def chat_completions(
                 selected.ai_model_name,
             )
 
-    model_name = _validate_model_name(body.get("model", ""))
+    model_name = body.get("model", "").strip()
+    # 客户端可不传 model_name（空串），由服务端根据 model_manage_info 选取
+    if not model_name:
+        model_name = selected.ai_model_name
+        body["model"] = model_name
+    else:
+        model_name = _validate_model_name(model_name)
     is_stream = body.get("stream", False)
 
     logger.info(
@@ -265,6 +279,7 @@ async def chat_completions(
         async def event_generator() -> AsyncGenerator[bytes, None]:
             nonlocal client, resp
             total_bytes = 0
+            accumulated_chunks: list[bytes] = []
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
                 resp = await client.send(
@@ -289,6 +304,7 @@ async def chat_completions(
                     return
                 async for chunk in _stream_aiter_bytes(resp):
                     total_bytes += len(chunk)
+                    accumulated_chunks.append(chunk)
                     yield chunk
             except Exception as e:
                 elapsed = (time.perf_counter() - t0) * 1000
@@ -302,10 +318,11 @@ async def chat_completions(
                 await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
                 if DEBUG:
+                    accumulated_text = b"".join(accumulated_chunks).decode("utf-8", errors="replace")
                     logger.info(
                         "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                        "elapsed=%.0fms total_bytes=%d",
-                        model_name, elapsed, total_bytes,
+                        "elapsed=%.0fms total_bytes=%d\n完整返回报文:\n%s",
+                        model_name, elapsed, total_bytes, accumulated_text,
                     )
                 else:
                     logger.info(
