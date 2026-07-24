@@ -36,10 +36,6 @@ _BLOCKED_HOSTS = frozenset({
     "169.254.0.0/16", "::1", "fc00::/7", "fe80::/10",
 })
 
-# ── DEBUG 开关（与 main.py 共享环境变量） ──
-DEBUG = __import__("os").environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
-
-
 def _validate_model_name(name: str) -> str:
     """校验 model 名称，防止路径注入 / SSRF.
 
@@ -197,14 +193,20 @@ async def chat_completions(
 
     selected = await call_manage_service.next_model(models, counter_type)
 
+    logger.info(
+        "POST /call-manage/chat/completions -> 选中模型详情: ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s is_base=%s",
+        selected.ai_model_id, selected.ai_model_name, selected.com_name,
+        selected.com_url, selected.is_base,
+    )
+
     # ── 校验并构造转发 URL ──
     raw_url = selected.com_url.rstrip("/")
-    # 仅对无路径的基础 URL 追加 /chat/completions
-    parsed = urlparse(raw_url)
-    if not parsed.path or parsed.path == "/":
-        forward_url = f"{raw_url}/chat/completions"
-    else:
+    # 如果 URL 不以 /chat/completions 结尾则自动追加
+    # 兼容 DB 里存 https://openrouter.ai 或 https://openrouter.ai/api/v1 的情况
+    if raw_url.endswith("/chat/completions"):
         forward_url = raw_url
+    else:
+        forward_url = f"{raw_url}/chat/completions"
     _validate_url(forward_url)
 
     # ── 确定 API Key ──
@@ -222,13 +224,6 @@ async def chat_completions(
     # ── 解析请求体 ──
     body = await request.json()
     body = _replace_core_prompts(body)
-
-    # DEBUG：打印完整请求报文
-    if DEBUG:
-        logger.info(
-            "POST /call-manage/chat/completions -> 请求报文:\n%s",
-            json.dumps(body, ensure_ascii=False, indent=2),
-        )
 
     # 异步模式：关闭思考模式（兼容 deepseek 等推理模型）
     if is_async:
@@ -250,25 +245,45 @@ async def chat_completions(
                 selected.ai_model_name,
             )
 
-    model_name = body.get("model", "").strip()
+    client_model = body.get("model", "")
+    logger.info(
+        "POST /call-manage/chat/completions -> 客户端传入 model=%r, selected.ai_model_name=%r",
+        client_model, selected.ai_model_name,
+    )
+    model_name = client_model.strip()
     # 客户端可不传 model_name（空串），由服务端根据 model_manage_info 选取
     if not model_name:
         model_name = selected.ai_model_name
         body["model"] = model_name
+        logger.info(
+            "POST /call-manage/chat/completions -> 客户端未传 model，使用数据库配置: %r",
+            model_name,
+        )
     else:
         model_name = _validate_model_name(model_name)
+        logger.info(
+            "POST /call-manage/chat/completions -> 使用客户端传入 model: %r",
+            model_name,
+        )
     is_stream = body.get("stream", False)
 
     logger.info(
         "POST /call-manage/chat/completions -> model=%s stream=%s purpose=%s "
-        "selected=%s(%s) url=%s",
-        model_name, is_stream, llm_purpose, selected.ai_model_name, selected.com_name, forward_url,
+        "selected=%s(%s) url=%s body_model=%r",
+        model_name, is_stream, llm_purpose, selected.ai_model_name, selected.com_name,
+        forward_url, body.get("model"),
     )
 
     fwd_headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    # 打印最终发往上游 LLM 的请求报文
+    logger.info(
+        "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
+        json.dumps(body, ensure_ascii=False, indent=2),
+    )
 
     # ── 流式转发 ──
     if is_stream:
@@ -280,6 +295,7 @@ async def chat_completions(
             nonlocal client, resp
             total_bytes = 0
             accumulated_chunks: list[bytes] = []
+            accumulated_content: list[str] = []  # 收集 delta.content
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
                 resp = await client.send(
@@ -305,6 +321,18 @@ async def chat_completions(
                 async for chunk in _stream_aiter_bytes(resp):
                     total_bytes += len(chunk)
                     accumulated_chunks.append(chunk)
+                    # 解析 SSE chunk 提取 delta.content
+                    text = chunk.decode("utf-8", errors="replace")
+                    for line in text.split("\n"):
+                        if line.startswith("data: ") and line[6:] != "[DONE]":
+                            try:
+                                data = json.loads(line[6:])
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    accumulated_content.append(content)
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                pass
                     yield chunk
             except Exception as e:
                 elapsed = (time.perf_counter() - t0) * 1000
@@ -317,19 +345,12 @@ async def chat_completions(
                 await _close_safely(resp)
                 await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
-                if DEBUG:
-                    accumulated_text = b"".join(accumulated_chunks).decode("utf-8", errors="replace")
-                    logger.info(
-                        "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                        "elapsed=%.0fms total_bytes=%d\n完整返回报文:\n%s",
-                        model_name, elapsed, total_bytes, accumulated_text,
-                    )
-                else:
-                    logger.info(
-                        "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                        "elapsed=%.0fms total_bytes=%d",
-                        model_name, elapsed, total_bytes,
-                    )
+                content_text = "".join(accumulated_content)
+                logger.info(
+                    "POST /call-manage/chat/completions <- STREAM DONE model=%s "
+                    "elapsed=%.0fms total_bytes=%d content_chars=%d\n完整返回内容:\n%s",
+                    model_name, elapsed, total_bytes, len(content_text), content_text,
+                )
 
         return StreamingResponse(
             event_generator(),
@@ -348,14 +369,9 @@ async def chat_completions(
             elapsed = (time.perf_counter() - t0) * 1000
             resp_text = resp.text
             logger.info(
-                "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d",
-                resp.status_code, model_name, elapsed, len(resp_text),
+                "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d\n完整返回报文:\n%s",
+                resp.status_code, model_name, elapsed, len(resp_text), resp_text,
             )
-            if DEBUG:
-                logger.info(
-                    "POST /call-manage/chat/completions <- 完整返回报文:\n%s",
-                    resp_text,
-                )
 
             if resp.status_code >= 400:
                 logger.warning(

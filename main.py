@@ -18,6 +18,10 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(message)s", "%Y-%m-%d %H:%M:%S"))
     logger.addHandler(handler)
 
+# 关闭第三方库的 INFO 日志（httpx, urllib3 等）
+for lib in ("httpx", "httpcore", "urllib3"):
+    logging.getLogger(lib).setLevel(logging.WARNING)
+
 DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
 
 @asynccontextmanager
