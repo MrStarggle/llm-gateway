@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.services import call_manage_service
 from app.utils.response import ResponseFactory
-from propmt import core_propmt_one, core_propmt_two, role_core_propmt
+from propmt import core_propmt_one, core_propmt_two, role_core_propmt, core_list
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,7 @@ def _validate_url(url: str) -> str:
 def _replace_core_prompts(obj: Any) -> Any:
     """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
     if isinstance(obj, str):
+        obj = obj.replace("<core_list>", core_list())
         obj = obj.replace("<core_propmt>", core_propmt_one())
         obj = obj.replace("</core_propmt>", core_propmt_two())
         obj = obj.replace("<role_core_propmt>", role_core_propmt())
