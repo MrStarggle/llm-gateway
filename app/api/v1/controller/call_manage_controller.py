@@ -297,6 +297,7 @@ async def chat_completions(
             total_bytes = 0
             accumulated_chunks: list[bytes] = []
             accumulated_content: list[str] = []  # 收集 delta.content
+            accumulated_usage: dict[str, int] = {}  # 收集 usage（prompt/completion/total_tokens）
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
                 resp = await client.send(
@@ -322,7 +323,7 @@ async def chat_completions(
                 async for chunk in _stream_aiter_bytes(resp):
                     total_bytes += len(chunk)
                     accumulated_chunks.append(chunk)
-                    # 解析 SSE chunk 提取 delta.content
+                    # 解析 SSE chunk 提取 delta.content 和 usage（部分供应商在最后一个 chunk 中附带 usage）
                     text = chunk.decode("utf-8", errors="replace")
                     for line in text.split("\n"):
                         if line.startswith("data: ") and line[6:] != "[DONE]":
@@ -332,6 +333,12 @@ async def chat_completions(
                                 content = delta.get("content", "")
                                 if content:
                                     accumulated_content.append(content)
+                                # 提取 usage（若有）
+                                usage = data.get("usage")
+                                if usage and isinstance(usage, dict):
+                                    accumulated_usage["prompt_tokens"] = usage.get("prompt_tokens", 0)
+                                    accumulated_usage["completion_tokens"] = usage.get("completion_tokens", 0)
+                                    accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 pass
                     yield chunk
@@ -347,10 +354,17 @@ async def chat_completions(
                 await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
                 content_text = "".join(accumulated_content)
+                usage_info = ""
+                if accumulated_usage:
+                    usage_info = (
+                        f" usage[prompt={accumulated_usage.get('prompt_tokens', 0)} "
+                        f"completion={accumulated_usage.get('completion_tokens', 0)} "
+                        f"total={accumulated_usage.get('total_tokens', 0)}]"
+                    )
                 logger.info(
                     "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                    "elapsed=%.0fms total_bytes=%d content_chars=%d\n完整返回内容:\n%s",
-                    model_name, elapsed, total_bytes, len(content_text), content_text,
+                    "elapsed=%.0fms total_bytes=%d content_chars=%d%s\n完整返回内容:\n%s",
+                    model_name, elapsed, total_bytes, len(content_text), usage_info, content_text,
                 )
 
         return StreamingResponse(
