@@ -18,9 +18,11 @@
         .tab-item.active { color: #4a90d9; border-bottom-color: #4a90d9; }
         .tab-badge { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 6px; vertical-align: middle; }
         .tab-badge.local { background: #e8f5e9; color: #2e7d32; }
-        .tab-badge.remote { background: #e3f2fd; color: #1565c0; }
+        .tab-badge.international { background: #e3f2fd; color: #1565c0; }
+        .tab-badge.domestic { background: #fff3e0; color: #e65100; }
         .tab-item.active .tab-badge.local { background: #c8e6c9; }
-        .tab-item.active .tab-badge.remote { background: #bbdefb; }
+        .tab-item.active .tab-badge.international { background: #bbdefb; }
+        .tab-item.active .tab-badge.domestic { background: #ffe0b2; }
 
         .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
         .toolbar input, .toolbar select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; outline: none; }
@@ -135,8 +137,11 @@
             <div class="tab-item active" id="tabLocal" onclick="switchTab('local')">
                 📍 本地模型<span class="tab-badge local">LOCAL</span>
             </div>
-            <div class="tab-item" id="tabRemote" onclick="switchTab('remote')">
-                ☁️ 远程模型<span class="tab-badge remote">REMOTE</span>
+            <div class="tab-item" id="tabInternational" onclick="switchTab('international')">
+                🌍 国际模型<span class="tab-badge international">INTERNATIONAL</span>
+            </div>
+            <div class="tab-item" id="tabDomestic" onclick="switchTab('domestic')">
+                🇨🇳 国内模型<span class="tab-badge domestic">DOMESTIC</span>
             </div>
         </div>
 
@@ -388,14 +393,16 @@
         // ========== 环境切换 ==========
         const API_TARGETS = {
             local: '/api/v1/model-manage',
-            remote: 'https://www.starggle.com/api/v1/model-manage'
+            international: 'https://www.starggle.com/api/v1/model-manage',
+            domestic: 'http://124.221.134.139/api/v1/model-manage'
         };
         let API_BASE = API_TARGETS['local'];
 
         function switchTab(target) {
             API_BASE = API_TARGETS[target];
             document.getElementById('tabLocal').classList.toggle('active', target === 'local');
-            document.getElementById('tabRemote').classList.toggle('active', target === 'remote');
+            document.getElementById('tabInternational').classList.toggle('active', target === 'international');
+            document.getElementById('tabDomestic').classList.toggle('active', target === 'domestic');
             _allCompanies = null;
             _modelCache = [];
             // 切到远程时需要重新鉴权
@@ -481,7 +488,7 @@
                     <td><span class="url-cell" title="${esc(m.comUrl)}">${esc(m.comUrl)}</span></td>
                     <td><span class="api-key-cell" title="${esc(m.apiKey)}">${maskApiKey(m.apiKey)}</span></td>
                     <td>${typeTag(m.aiModelType)}</td>
-                    <td><label class="toggle-switch" onclick="toggleUsing('${esc(m.aiModelId)}', this)">
+                    <td><label class="toggle-switch" onclick="toggleUsing('${esc(m.aiModelId)}', this, event)">
                         <input type="checkbox" ${m.isUsing === '1' ? 'checked' : ''}>
                         <span class="toggle-slider"></span>
                     </label></td>
@@ -612,17 +619,21 @@
         }
 
         // 胶囊开关：实时切换"使用中"状态
-        async function toggleUsing(id, labelEl) {
+        // 注意：onclick 绑在 <label> 上，浏览器的 label 默认行为（切换 checkbox）
+        // 会在事件处理器执行之后才触发，导致 checkbox.checked 读到旧值。
+        // 因此必须 preventDefault 阻止默认行为，手动计算目标状态并手动更新 UI。
+        async function toggleUsing(id, labelEl, event) {
+            if (event) event.preventDefault();
             const checkbox = labelEl.querySelector('input');
-            const newVal = checkbox.checked ? '1' : '0';
+            const intendedChecked = !checkbox.checked;
+            const newVal = intendedChecked ? '1' : '0';
             labelEl.classList.add('loading');
             const result = await api('PUT', '/' + id, { is_using: newVal });
             labelEl.classList.remove('loading');
             if (result.code === 200) {
+                checkbox.checked = intendedChecked;
                 toast(newVal === '1' ? '已启用' : '已停用');
             } else {
-                // 失败时还原开关
-                checkbox.checked = !checkbox.checked;
                 toast(result.message || '更新失败', false);
             }
         }
