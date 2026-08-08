@@ -86,6 +86,43 @@ def _replace_core_prompts(obj: Any) -> Any:
     return obj
 
 
+# ── 思考模式参数注入 ──
+def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: bool) -> None:
+    """按选中模型/运营商的参数规范，注入或移除请求体中的思考参数.
+
+    与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
+    - OpenRouter 网关: deepseek 用 ``reasoning.enabled`` 控制；非思考模式不传
+      reasoning（部分模型强制要求 reasoning 启用，传 ``enabled=false`` 会 400）
+    - DeepSeek: ``thinking = {"type": "enabled"|"disabled"}``
+    - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
+      关闭即移除字段（无 ``type=disabled`` 语义）
+    - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
+    - 其余模型族（GPT/o系列、Grok、MiMo 等）无可控思考参数 → 不处理，保持原样
+    """
+    name = (model_name or "").lower()
+    url = (com_url or "").lower()
+
+    if "openrouter" in url:
+        if "deepseek" not in name:
+            return
+        if enabled:
+            body["reasoning"] = {"enabled": True}
+        else:
+            body.pop("reasoning", None)
+        return
+
+    if "deepseek" in name:
+        body["thinking"] = {"type": "enabled" if enabled else "disabled"}
+    elif "claude" in name:
+        if enabled:
+            body["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+        else:
+            body.pop("thinking", None)
+    elif "qwen" in name:
+        body["enable_thinking"] = enabled
+        body["chat_template_kwargs"] = {"enable_thinking": enabled}
+
+
 # ── httpx 安全关闭 ──
 async def _close_safely(obj: Optional[object]) -> None:
     """安全关闭 httpx 客户端或响应，避免 finally 中异常覆盖原始错误."""
@@ -166,6 +203,7 @@ async def chat_completions(
     authorization: Optional[str] = Header(None),
     x_starggle_purpose: Optional[str] = Header(None, alias="X-Starggle-Purpose"),
     x_starggle_response_format: Optional[str] = Header(None, alias="X-Starggle-Response-Format"),
+    x_starggle_thinking: Optional[str] = Header(None, alias="X-Starggle-Thinking"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
@@ -173,6 +211,9 @@ async def chat_completions(
         Authorization: 可选的 Bearer token（主 LLM 模式下可覆盖 DB 中的 api_key）.
         X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型）或
                             "async"（使用 is_base="1" 的基础模型）.
+        X-Starggle-Thinking: 主 LLM 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
+                             服务端按选中模型/运营商的参数规范注入思考参数；
+                             异步模式固定关闭思考，不受此头影响.
 
     请求体: 标准 OpenAI chat completions 格式.
     """
@@ -266,6 +307,17 @@ async def chat_completions(
             "POST /call-manage/chat/completions -> 使用客户端传入 model: %r",
             model_name,
         )
+
+    # 主 LLM 思考模式注入：由 X-Starggle-Thinking 头控制，按选中模型/运营商的参数规范构造。
+    # 异步模式（is_async）固定关闭思考，不受此头影响。
+    if not is_async and x_starggle_thinking is not None:
+        thinking_enabled = x_starggle_thinking.strip().lower() in ("1", "true", "yes", "on", "enabled")
+        _apply_thinking_params(body, model_name, selected.com_url, thinking_enabled)
+        logger.info(
+            "POST /call-manage/chat/completions -> X-Starggle-Thinking=%r enabled=%s model=%s",
+            x_starggle_thinking, thinking_enabled, model_name,
+        )
+
     is_stream = body.get("stream", False)
 
     logger.info(
