@@ -11,17 +11,17 @@ case "$1" in
     sudo cp "$SERVICE_FILE" "$SYSTEMD_DIR"
     sudo systemctl daemon-reload
     sudo systemctl enable --now "$SERVICE_NAME"
-    sudo systemctl status "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME" --no-pager
     ;;
   reload)
     echo ">>> 重启 ${SERVICE_NAME} ..."
     sudo systemctl restart "$SERVICE_NAME"
-    sudo systemctl status "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME" --no-pager
     ;;
   stop)
     echo ">>> 停止 ${SERVICE_NAME} ..."
     sudo systemctl stop "$SERVICE_NAME"
-    sudo systemctl status "$SERVICE_NAME"
+    sudo systemctl status "$SERVICE_NAME" --no-pager
     ;;
   showlog)
     echo ">>> 实时查看 ${SERVICE_NAME} 日志 (Ctrl+C 退出)..."
