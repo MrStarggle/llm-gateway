@@ -17,3 +17,21 @@ CREATE TABLE IF NOT EXISTS model_manage_info
     remarks        TEXT,                            -- 备注
     UNIQUE (ai_model_id)                              -- 模型 ID 唯一
     );
+
+CREATE TABLE IF NOT EXISTS user_token_info
+(
+    id                INT AUTO_INCREMENT primary key, -- 自增主键
+    user_id           VARCHAR(64)   NOT NULL,         -- 用户ID
+    model             VARCHAR(128)  NOT NULL DEFAULT '',   -- 模型名称
+    purpose           VARCHAR(16)   NOT NULL DEFAULT 'main', -- 用途: main/async
+    is_stream         INT           NOT NULL DEFAULT 0, -- 是否流式: 1是0否
+    prompt_tokens     INT           NOT NULL DEFAULT 0, -- 输入token
+    completion_tokens INT           NOT NULL DEFAULT 0, -- 输出token
+    total_tokens      INT           NOT NULL DEFAULT 0, -- 总token
+    prompt_cache_hit_tokens  INT    NOT NULL DEFAULT 0, -- 缓存命中token
+    prompt_cache_miss_tokens INT    NOT NULL DEFAULT 0, -- 缓存未命中token
+    record_date       DATE          NOT NULL,         -- 记录日期（按天聚合用）
+    created_at        TIMESTAMP default CURRENT_TIMESTAMP not null, -- 创建时间
+    KEY idx_user_id (user_id),                        -- 用户ID索引
+    KEY idx_record_date (record_date)                 -- 日期索引
+    );

@@ -204,6 +204,7 @@ async def chat_completions(
     x_starggle_purpose: Optional[str] = Header(None, alias="X-Starggle-Purpose"),
     x_starggle_response_format: Optional[str] = Header(None, alias="X-Starggle-Response-Format"),
     x_starggle_thinking: Optional[str] = Header(None, alias="X-Starggle-Thinking"),
+    x_starggle_user_id: Optional[str] = Header(None, alias="X-Starggle-User-Id"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
@@ -381,16 +382,23 @@ async def chat_completions(
                         if line.startswith("data: ") and line[6:] != "[DONE]":
                             try:
                                 data = json.loads(line[6:])
-                                delta = data.get("choices", [{}])[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    accumulated_content.append(content)
-                                # 提取 usage（若有）
+                                # 提取 usage（若有）：必须放在 choices 处理之前——
+                                # DeepSeek 等供应商的末帧 usage 带空 choices []，若先取 choices[0] 会 IndexError，
+                                # 导致 usage 提取被 except 吞掉，流式 token 记录丢失
                                 usage = data.get("usage")
                                 if usage and isinstance(usage, dict):
                                     accumulated_usage["prompt_tokens"] = usage.get("prompt_tokens", 0)
                                     accumulated_usage["completion_tokens"] = usage.get("completion_tokens", 0)
                                     accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
+                                    accumulated_usage["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
+                                    accumulated_usage["prompt_cache_miss_tokens"] = usage.get("prompt_cache_miss_tokens", 0)
+                                # 正文 delta：仅当 choices 非空时提取
+                                choices = data.get("choices")
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        accumulated_content.append(content)
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 pass
                     yield chunk
@@ -418,6 +426,16 @@ async def chat_completions(
                     "elapsed=%.0fms total_bytes=%d content_chars=%d%s\n完整返回内容:\n%s",
                     model_name, elapsed, total_bytes, len(content_text), usage_info, content_text,
                 )
+
+                # 记录 token 用量（非关键路径，失败不影响响应）
+                if x_starggle_user_id and accumulated_usage:
+                    try:
+                        await call_manage_service.record_token_usage(
+                            db, x_starggle_user_id, model_name, llm_purpose,
+                            is_stream=True, usage=accumulated_usage,
+                        )
+                    except Exception as e:
+                        logger.warning("记录流式 token 用量失败: user_id=%s error=%s", x_starggle_user_id, e)
 
         return StreamingResponse(
             event_generator(),
@@ -451,12 +469,24 @@ async def chat_completions(
                 )
 
             try:
-                return resp.json()
+                data = resp.json()
             except Exception:
                 return JSONResponse(
                     {"_raw": resp_text, "status_code": resp.status_code},
                     status_code=resp.status_code,
                 )
+
+            # 记录 token 用量（非关键路径，失败不影响响应）
+            try:
+                usage = (data or {}).get("usage") or {}
+                await call_manage_service.record_token_usage(
+                    db, x_starggle_user_id, model_name, llm_purpose,
+                    is_stream=False, usage=usage,
+                )
+            except Exception as e:
+                logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", x_starggle_user_id, e)
+
+            return data
     except HTTPException:
         raise
     except Exception as e:

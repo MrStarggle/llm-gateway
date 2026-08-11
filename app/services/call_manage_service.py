@@ -7,11 +7,13 @@
 """
 import asyncio
 import logging
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_manage_info import ModelManageInfo
+from app.models.user_token_info import UserTokenInfo
 
 logger = logging.getLogger(__name__)
 
@@ -78,3 +80,38 @@ async def next_model(
         counter_type, idx, len(models), selected.ai_model_name, selected.com_url,
     )
     return selected
+
+
+async def record_token_usage(
+    db: AsyncSession,
+    user_id: str,
+    model: str,
+    purpose: str,
+    is_stream: bool,
+    usage: dict,
+) -> None:
+    """记录一次 LLM 调用的 token 消耗（每次调用一行明细）.
+
+    非关键路径：失败仅记录日志，绝不影响 LLM 响应的返回.
+    无 user_id 或无 usage 时直接跳过.
+    """
+    if not user_id or not usage:
+        return
+    record = UserTokenInfo(
+        user_id=user_id[:64],
+        model=(model or "")[:128],
+        purpose=(purpose or "main")[:16],
+        is_stream=1 if is_stream else 0,
+        prompt_tokens=int(usage.get("prompt_tokens") or 0),
+        completion_tokens=int(usage.get("completion_tokens") or 0),
+        total_tokens=int(usage.get("total_tokens") or 0),
+        prompt_cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens") or 0),
+        prompt_cache_miss_tokens=int(usage.get("prompt_cache_miss_tokens") or 0),
+        record_date=date.today(),
+    )
+    try:
+        db.add(record)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("记录 token 用量失败: user_id=%s error=%s", user_id, e)

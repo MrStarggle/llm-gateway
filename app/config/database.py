@@ -81,6 +81,7 @@ async def init_database():
     try:
         # 1. ORM 模型建表
         from app.models.model_manage_info import ModelManageInfo  # noqa: F401
+        from app.models.user_token_info import UserTokenInfo  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
