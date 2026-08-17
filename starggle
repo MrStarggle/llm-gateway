@@ -2,7 +2,7 @@
 # Starggle 服务管理脚本
 
 SERVICE_NAME="starggle"
-SERVICE_FILE="/home/installedAPP/StarggleAPI/starggle.service"
+SERVICE_FILE="/home/ubuntu/installedAPP/StarggleAPI/starggle.service"
 SYSTEMD_DIR="/etc/systemd/system/"
 
 case "$1" in

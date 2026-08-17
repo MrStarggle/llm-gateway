@@ -81,6 +81,7 @@
         .form-group input, .form-group select, .form-group textarea { padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; }
         .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.15); }
         .form-group textarea { resize: vertical; min-height: 60px; }
+        .form-group textarea:disabled, .form-group input:disabled { background: #f5f5f5; color: #aaa; cursor: not-allowed; }
         .radio-group { display: flex; gap: 16px; align-items: center; padding-top: 4px; }
         .radio-group label { display: flex; align-items: center; gap: 4px; font-weight: 400; font-size: 13px; cursor: pointer; }
         .radio-group input[type="radio"] { accent-color: #4a90d9; }
@@ -182,6 +183,7 @@
                         <th>思考</th>
                         <th>流式</th>
                         <th>基础</th>
+                        <th>提供商</th>
                         <th>备注</th>
                         <th>操作</th>
                     </tr>
@@ -286,6 +288,10 @@
                     <div class="form-group">
                         <label>额外配置 (JSON)</label>
                         <textarea id="fExtraConfig" placeholder='{"voice": "alloy", "speed": 1.0}'></textarea>
+                    </div>
+                    <div class="form-group full">
+                        <label>提供商参数 (JSON)</label>
+                        <textarea id="fProviderConfig" placeholder='{"order": ["GMICloud","CoreWeave","Baseten"], "allow_fallbacks": false}'></textarea>
                     </div>
                     <div class="form-group full">
                         <label>备注</label>
@@ -444,6 +450,101 @@
             return '<span class="tag tag-no">默认</span>';
         }
 
+        // 提供商路由参数（OpenRouter 等上游的 provider 配置），存放在 extra_config.provider 中
+        function providerTag(extraConfig) {
+            const obj = parseExtraConfig(extraConfig);
+            if (obj && obj.provider) {
+                return '<span class="tag tag-hybrid">自定义</span>';
+            }
+            return '<span class="tag tag-no">默认</span>';
+        }
+
+        function parseExtraConfig(extraConfig) {
+            if (!extraConfig) return null;
+            try {
+                return JSON.parse(extraConfig);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 编辑时回填提供商参数（从 extra_config 中提取 provider 键）
+        function providerConfigFromExtra(extraConfig) {
+            const obj = parseExtraConfig(extraConfig);
+            if (obj && obj.provider) {
+                return JSON.stringify(obj.provider, null, 2);
+            }
+            return '';
+        }
+
+        // 提交时合并"额外配置"与"提供商参数"：
+        // 提供商参数非空 -> 写入 extra_config.provider；清空 -> 移除 provider 键。
+        // 校验失败时 toast 提示并抛错，由调用方中止提交。
+        // 注意：提供商参数框置灰（disabled）时按空处理，不写入 provider。
+        function buildExtraConfig() {
+            const extraRaw = document.getElementById('fExtraConfig').value.trim();
+            const providerInput = document.getElementById('fProviderConfig');
+            const providerRaw = providerInput.disabled ? '' : providerInput.value.trim();
+
+            let extraObj = null;
+            if (extraRaw) {
+                try {
+                    extraObj = JSON.parse(extraRaw);
+                } catch (e) {
+                    toast('额外配置必须是有效的 JSON', false);
+                    throw new Error('invalid extra_config');
+                }
+            }
+
+            let providerObj = null;
+            if (providerRaw) {
+                try {
+                    providerObj = JSON.parse(providerRaw);
+                } catch (e) {
+                    toast('提供商参数必须是有效的 JSON', false);
+                    throw new Error('invalid provider_config');
+                }
+            }
+
+            if (providerObj) {
+                if (!extraObj || typeof extraObj !== 'object' || Array.isArray(extraObj)) {
+                    extraObj = {};
+                }
+                extraObj.provider = providerObj;
+            } else if (extraObj && Object.prototype.hasOwnProperty.call(extraObj, 'provider')) {
+                delete extraObj.provider;
+                if (Object.keys(extraObj).length === 0) extraObj = null;
+            }
+
+            return extraObj ? JSON.stringify(extraObj) : null;
+        }
+
+        // ========== 提供商参数：仅 OpenRouter 激活 ==========
+        // 默认配置参考 temp/temp.txt 的 provider 示例
+        const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["GMICloud","CoreWeave","Baseten"], "allow_fallbacks": false}';
+
+        function isOpenRouter() {
+            const name = (document.getElementById('fComName').value || '').toLowerCase();
+            const url = (document.getElementById('fComUrl').value || '').toLowerCase();
+            return name.includes('openrouter') || url.includes('openrouter');
+        }
+
+        // 根据运营商切换提供商参数框状态：
+        // - OpenRouter：启用，空时预填默认配置
+        // - 其他厂商：置灰并清空（避免将 provider 参数发送给不支持它的上游）
+        function updateProviderFieldState() {
+            const input = document.getElementById('fProviderConfig');
+            if (isOpenRouter()) {
+                input.disabled = false;
+                if (!input.value.trim()) {
+                    input.value = OPENROUTER_DEFAULT_PROVIDER;
+                }
+            } else {
+                input.disabled = true;
+                input.value = '';
+            }
+        }
+
         async function api(method, path, body) {
             const headers = { 'Content-Type': 'application/json' };
             if (_adminToken) headers['Authorization'] = 'Bearer ' + _adminToken;
@@ -495,6 +596,7 @@
                     <td>${thinkTag(m.isThink)}</td>
                     <td>${boolTag(m.isStream)}</td>
                     <td>${boolTag(m.isBase, 'tag-think', 'tag-no')}</td>
+                    <td>${providerTag(m.extraConfig)}</td>
                     <td><span class="text-ellipsis" title="${esc(m.remarks)}">${esc(m.remarks)}</span></td>
                     <td class="actions">
                         <button class="btn btn-outline btn-sm" onclick="openEdit('${esc(m.aiModelId)}')">编辑</button>
@@ -533,7 +635,11 @@
             setRadio('fStream', m.isStream);
             setRadio('fBase', m.isBase);
             document.getElementById('fExtraConfig').value = m.extraConfig || '';
+            document.getElementById('fProviderConfig').value = providerConfigFromExtra(m.extraConfig);
             document.getElementById('fRemarks').value = m.remarks || '';
+
+            // 按运营商激活/置灰提供商参数框（OpenRouter 激活并预填默认配置）
+            updateProviderFieldState();
 
             document.getElementById('modalOverlay').classList.add('active');
         }
@@ -556,7 +662,9 @@
             setRadio('fStream', '1');
             setRadio('fBase', '0');
             document.getElementById('fExtraConfig').value = '';
+            document.getElementById('fProviderConfig').value = '';
             document.getElementById('fRemarks').value = '';
+            updateProviderFieldState();
         }
 
         function setRadio(name, value) {
@@ -572,6 +680,15 @@
 
         async function submitForm() {
             const editId = document.getElementById('editId').value;
+
+            // 合并"额外配置"与"提供商参数"到 extra_config（校验失败时内部已 toast 并抛错）
+            let extraConfig;
+            try {
+                extraConfig = buildExtraConfig();
+            } catch (e) {
+                return;
+            }
+
             const body = {
                 ai_model_name: document.getElementById('fModelName').value.trim(),
                 com_name: document.getElementById('fComName').value.trim(),
@@ -582,7 +699,7 @@
                 is_think: document.getElementById('fThink').value,
                 is_stream: getRadio('fStream'),
                 is_base: getRadio('fBase'),
-                extra_config: document.getElementById('fExtraConfig').value.trim() || null,
+                extra_config: extraConfig,
                 remarks: document.getElementById('fRemarks').value.trim() || null,
             };
 
@@ -650,6 +767,7 @@
             document.getElementById('suggestClear').classList.remove('visible');
             document.getElementById('suggestList').classList.remove('active');
             document.getElementById('suggestArrow').classList.remove('open');
+            updateProviderFieldState();
             document.getElementById('fComName').focus();
         }
         function clearModelName() {
@@ -719,6 +837,8 @@
             const listEl = document.getElementById('suggestList');
             const arrow = document.getElementById('suggestArrow');
 
+            updateProviderFieldState();
+
             if (name.length === 0) {
                 if (_allCompanies && _allCompanies.length > 0) {
                     renderSuggestions(_allCompanies.slice(0, 8), true);
@@ -784,6 +904,7 @@
             document.getElementById('suggestClear').classList.add('visible');
             listEl.classList.remove('active');
             arrow.classList.remove('open');
+            updateProviderFieldState();
         }
 
         function onComNameBlur() {
@@ -809,6 +930,7 @@
                     if (!url.startsWith('http')) url = 'https://' + url;
                     urlEl.value = url;
                 }
+                updateProviderFieldState();
             }, 200);
         }
 

@@ -1,17 +1,22 @@
 [Unit]
-Description=Starggle LLM API 转发服务
-After=network.target
+Description=Starggle LLM API Forwarding Service
+After=network.target docker.service
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/home/installedAPP/StarggleAPI
+User=ubuntu
+WorkingDirectory=/home/ubuntu/installedAPP/StarggleAPI
+Environment=MYSQL_HOST=localhost
+Environment=MYSQL_PORT=3306
+Environment=MYSQL_USER=root
+Environment=MYSQL_PASSWORD=Yang@123
+Environment=MYSQL_DATABASE=starggle_main
 Environment=STARGGLE_DEBUG=1
-ExecStart=/home/installedAPP/StarggleAPI/venv/bin/uvicorn main:app --host 0.0.0.0 --port 9010
+ExecStart=/home/ubuntu/installedAPP/StarggleAPI/venv/bin/uvicorn main:app --host 0.0.0.0 --port 9010
 Restart=always
 RestartSec=3
-StandardOutput=append:/home/installedAPP/StarggleAPI/app.log
-StandardError=append:/home/installedAPP/StarggleAPI/app.log
+StandardOutput=append:/home/ubuntu/installedAPP/StarggleAPI/app.log
+StandardError=append:/home/ubuntu/installedAPP/StarggleAPI/app.log
 
 [Install]
 WantedBy=multi-user.target

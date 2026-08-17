@@ -93,8 +93,8 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     """按选中模型/运营商的参数规范，注入或移除请求体中的思考参数.
 
     与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
-    - OpenRouter 网关: deepseek 用 ``reasoning.enabled`` 控制；非思考模式不传
-      reasoning（部分模型强制要求 reasoning 启用，传 ``enabled=false`` 会 400）
+    - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值控制（``{"enabled": true|false}``），
+      同时清理旧格式 ``extra_body.thinking`` 避免与新参数冲突
     - DeepSeek: ``thinking = {"type": "enabled"|"disabled"}``
     - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
       关闭即移除字段（无 ``type=disabled`` 语义）
@@ -107,10 +107,13 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     if "openrouter" in url:
         if "deepseek" not in name:
             return
-        if enabled:
-            body["reasoning"] = {"enabled": True}
-        else:
-            body.pop("reasoning", None)
+        body["reasoning"] = {"enabled": enabled}
+        # 清理旧格式 extra_body.thinking，避免与官方 reasoning 参数冲突
+        extra_body = body.get("extra_body")
+        if isinstance(extra_body, dict):
+            extra_body.pop("thinking", None)
+            if not extra_body:
+                body.pop("extra_body", None)
         return
 
     if "deepseek" in name:
@@ -123,6 +126,41 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     elif "qwen" in name:
         body["enable_thinking"] = enabled
         body["chat_template_kwargs"] = {"enable_thinking": enabled}
+
+
+# ── 提供商路由参数注入 ──
+def _apply_provider_params(body: dict, selected) -> None:
+    """将 model_manage.html 维护的提供商参数（extra_config.provider）注入 OpenRouter 请求.
+
+    仅缓存一个事实：OpenRouter 将路由参数放在请求体**顶层** ``provider`` 键
+    （参考 temp/temp.txt），与 deepseek 的 ``extra_body.thinking`` 不是一回事。
+    仅在运营商为 OpenRouter 且配置了 provider 时注入；
+    客户端已显式传 ``body["provider"]`` 时保留客户端值，避免覆盖业务侧显式指定的路由。
+    """
+    url = (selected.com_url or "").lower()
+    com_name = (selected.com_name or "").lower()
+    if "openrouter" not in url and "openrouter" not in com_name:
+        return
+    if not selected.extra_config:
+        return
+    try:
+        extra = json.loads(selected.extra_config)
+    except (json.JSONDecodeError, TypeError):
+        extra = None
+    provider = (extra or {}).get("provider")
+    if not isinstance(provider, dict) or not provider:
+        return
+    if "provider" in body:
+        logger.info(
+            "OpenRouter provider 参数：客户端已显式传入，跳过注入 body.provider=%s",
+            json.dumps(body["provider"], ensure_ascii=False),
+        )
+        return
+    body["provider"] = provider
+    logger.info(
+        "注入 OpenRouter provider 参数: %s",
+        json.dumps(provider, ensure_ascii=False),
+    )
 
 
 # ── httpx 安全关闭 ──
@@ -272,8 +310,7 @@ async def chat_completions(
 
     # 异步模式：关闭思考模式（兼容 deepseek 等推理模型）
     if is_async:
-        body["thinking"] = {"type": "disabled"}
-        body.pop("reasoning", None)
+        _apply_thinking_params(body, selected.ai_model_name, selected.com_url, False)
 
     # ── response_format 注入 ──
     # 客户端通过 X-Starggle-Response-Format header 声明需要 JSON 输出，
@@ -320,6 +357,9 @@ async def chat_completions(
             "POST /call-manage/chat/completions -> X-Starggle-Thinking=%r enabled=%s model=%s",
             x_starggle_thinking, thinking_enabled, model_name,
         )
+
+    # 提供商路由参数注入（OpenRouter）：把 model_manage_info.extra_config.provider 塞进请求体顶层 provider
+    _apply_provider_params(body, selected)
 
     is_stream = body.get("stream", False)
 
