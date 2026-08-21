@@ -20,7 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.services import call_manage_service
 from app.utils.response import ResponseFactory
-from propmt import core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek
+from propmt import (core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek,
+                    user_top_propmt, user_default_propmt, user_core_propmt)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ def _replace_core_prompts(obj: Any) -> Any:
         obj = obj.replace("<core_list>", core_list())
         obj = obj.replace("<core_propmt>", core_propmt_one())
         obj = obj.replace("</core_propmt>", core_propmt_two())
+        obj = obj.replace("<user_top_propmt>", user_top_propmt())
+        obj = obj.replace("<user_default_propmt>", user_default_propmt())
+        obj = obj.replace("<user_core_propmt>", user_core_propmt())
         obj = obj.replace("<core_propmt_deepseek>", core_propmt_deepseek())#todo 如果是deepseek系列模型
         #obj = obj.replace("<core_propmt_deepseek>", "")#todo 如果不是deepseek系列模型；暂时不动这个
         obj = obj.replace("<role_core_propmt>", role_core_propmt())

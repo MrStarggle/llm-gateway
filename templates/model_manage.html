@@ -291,7 +291,7 @@
                     </div>
                     <div class="form-group full">
                         <label>提供商参数 (JSON)</label>
-                        <textarea id="fProviderConfig" placeholder='{"order": ["GMICloud","CoreWeave","Baseten"], "allow_fallbacks": false}'></textarea>
+                        <textarea id="fProviderConfig" placeholder='{"order": ["CoreWeave","DeepInfra","GMICloud"], "allow_fallbacks": false}'></textarea>
                     </div>
                     <div class="form-group full">
                         <label>备注</label>
@@ -521,7 +521,7 @@
 
         // ========== 提供商参数：仅 OpenRouter 激活 ==========
         // 默认配置参考 temp/temp.txt 的 provider 示例
-        const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["GMICloud","CoreWeave","Baseten"], "allow_fallbacks": false}';
+        const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["CoreWeave","DeepInfra","GMICloud"], "allow_fallbacks": false}';
 
         function isOpenRouter() {
             const name = (document.getElementById('fComName').value || '').toLowerCase();
