@@ -97,20 +97,21 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     """按选中模型/运营商的参数规范，注入或移除请求体中的思考参数.
 
     与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
-    - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值控制（``{"enabled": true|false}``），
-      同时清理旧格式 ``extra_body.thinking`` 避免与新参数冲突
-    - DeepSeek: ``thinking = {"type": "enabled"|"disabled"}``
+    - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值统一控制（``{"enabled": true|false}``），
+      所有经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判；
+      非推理模型传该参数会被网关忽略，同时清理旧格式 ``extra_body.thinking`` 避免冲突
+    - DeepSeek 直连 / MiMo 官方 API（api.xiaomimimo.com）: ``thinking = {"type": "enabled"|"disabled"}``
     - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
       关闭即移除字段（无 ``type=disabled`` 语义）
     - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
-    - 其余模型族（GPT/o系列、Grok、MiMo 等）无可控思考参数 → 不处理，保持原样
+    - 其余模型族（GPT/o系列、Grok 等）无可控思考参数 → 不处理，保持原样
     """
     name = (model_name or "").lower()
     url = (com_url or "").lower()
 
     if "openrouter" in url:
-        if "deepseek" not in name:
-            return
+        # OpenRouter 是统一网关：所有经它的推理模型都用官方 reasoning.enabled 布尔值控制，
+        # 不按模型名逐个特判；非推理模型传该参数会被网关忽略，无副作用。
         body["reasoning"] = {"enabled": enabled}
         # 清理旧格式 extra_body.thinking，避免与官方 reasoning 参数冲突
         extra_body = body.get("extra_body")
@@ -120,7 +121,8 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
                 body.pop("extra_body", None)
         return
 
-    if "deepseek" in name:
+    # DeepSeek 原生接口与 MiMo 官方 API 格式一致，均用 thinking.type 控制
+    if "deepseek" in name or "mimo" in name or "xiaomimimo" in url:
         body["thinking"] = {"type": "enabled" if enabled else "disabled"}
     elif "claude" in name:
         if enabled:
