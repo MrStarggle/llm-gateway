@@ -82,6 +82,8 @@ async def init_database():
         # 1. ORM 模型建表
         from app.models.model_manage_info import ModelManageInfo  # noqa: F401
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
+        from app.models.user_info import UserInfo  # noqa: F401
+        from app.models.order_info import OrderInfo  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
@@ -129,7 +131,18 @@ async def init_database():
 
 async def run_migrations():
     """执行数据库迁移，为现有表添加新字段"""
-    migrations = []
+    migrations = [
+        # 积分制：新增积分余额字段（共享表，列由本系统负责迁移，重复执行自动跳过）
+        "ALTER TABLE user_info ADD COLUMN point_balance INT NOT NULL DEFAULT 0 COMMENT '积分余额（余额即会员等级）'",
+        # 会员系统：新增到期时间 / 订阅ID / 套餐ID 字段（与 StarggleCom 迁移保持一致，重复执行自动跳过）
+        "ALTER TABLE user_info ADD COLUMN membership_expire_at DATETIME NULL COMMENT '会员到期时间（免费档为空）'",
+        "ALTER TABLE user_info ADD COLUMN subscription_id VARCHAR(128) NULL COMMENT '支付渠道订阅ID（Creem 用）'",
+        "ALTER TABLE user_info ADD COLUMN plan_id VARCHAR(64) NULL COMMENT '支付渠道套餐ID（Creem 用）'",
+        # 会员等级默认值修正 + 历史数据归一（与 StarggleCom 一致）
+        "ALTER TABLE user_info MODIFY COLUMN membership_level VARCHAR(32) NULL DEFAULT 'free' COMMENT '会员等级: free/plus/pro'",
+        "UPDATE user_info SET membership_level = 'free' WHERE membership_level = '1'",
+        "UPDATE user_info SET membership_level = 'plus' WHERE membership_level = '2'",
+    ]
     async with engine.begin() as conn:
         for sql in migrations:
             try:

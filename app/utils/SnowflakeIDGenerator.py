@@ -70,3 +70,8 @@ class SnowflakeIDGenerator:
 
 # 全局单例实例（datacenter_id=1, worker_id=1）
 snowflake_id_generator = SnowflakeIDGenerator(datacenter_id=1, worker_id=1)
+
+
+def get_snowflake_id() -> str:
+    """模块级便捷函数：返回字符串形式的雪花 ID（与 StarggleCom 一致）"""
+    return snowflake_id_generator.next_id_str()

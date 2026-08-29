@@ -35,3 +35,22 @@ CREATE TABLE IF NOT EXISTS user_token_info
     KEY idx_user_id (user_id),                        -- 用户ID索引
     KEY idx_record_date (record_date)                 -- 日期索引
     );
+
+CREATE TABLE IF NOT EXISTS orders
+(
+    id                 BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    order_no           VARCHAR(64)  NOT NULL UNIQUE COMMENT '业务订单号',
+    user_id            VARCHAR(64)  NOT NULL COMMENT '用户ID',
+    plan               VARCHAR(32)  NOT NULL COMMENT '套餐等级: free/plus/pro',
+    amount_cents       INT          NOT NULL DEFAULT 0 COMMENT '金额（分）',
+    currency           VARCHAR(8)   NOT NULL DEFAULT 'USD' COMMENT '币种',
+    status             VARCHAR(24)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/paid/cancelled/refunded/failed',
+    channel            VARCHAR(32)  NOT NULL DEFAULT 'mock' COMMENT '支付渠道: mock/creem/manual',
+    provider_order_id  VARCHAR(128) NULL COMMENT '支付渠道订单号',
+    provider_raw       TEXT         NULL COMMENT '支付回调原始数据(JSON)',
+    remark             VARCHAR(255) NULL COMMENT '备注',
+    created_at         TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    updated_at         TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间',
+    KEY idx_orders_user_id (user_id),
+    KEY idx_orders_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';

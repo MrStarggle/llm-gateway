@@ -1,5 +1,5 @@
 """用户信息表（与 StarggleCom 共享数据库，只读映射）"""
-from sqlalchemy import Column, String, Text, TIMESTAMP, text
+from sqlalchemy import Column, String, Text, TIMESTAMP, DateTime, Integer, text
 from sqlalchemy.sql import func
 from app.config.database import Base
 
@@ -26,7 +26,11 @@ class UserInfo(Base):
 
     ip_addr = Column(String(64), nullable=False, server_default="127.0.0.1")
     routing_model_id = Column(String(64), nullable=True)
-    membership_level = Column(String(32), nullable=False, server_default="1")
+    point_balance = Column(Integer, nullable=False, server_default="0", comment="积分余额（余额即会员等级）")
+    membership_level = Column(String(32), nullable=False, server_default="free")
+    membership_expire_at = Column(DateTime, nullable=True, comment="会员到期时间（免费档为空）")
+    subscription_id = Column(String(128), nullable=True, comment="支付渠道订阅ID（Creem 用）")
+    plan_id = Column(String(64), nullable=True, comment="支付渠道套餐ID（Creem 用）")
 
     created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=func.current_timestamp())

@@ -6,6 +6,7 @@
 """
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncGenerator, Optional
@@ -18,10 +19,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.config.membership import get_tier
 from app.services import call_manage_service
 from app.utils.response import ResponseFactory
 from propmt import (core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek,
-                    user_top_propmt, user_default_propmt, user_core_propmt)
+                    user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt)
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +76,13 @@ def _validate_url(url: str) -> str:
 def _replace_core_prompts(obj: Any) -> Any:
     """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
     if isinstance(obj, str):
-        obj = obj.replace("<core_list>", core_list())
-        obj = obj.replace("<core_propmt>", core_propmt_one())
-        obj = obj.replace("</core_propmt>", core_propmt_two())
-        obj = obj.replace("<user_top_propmt>", user_top_propmt())
-        obj = obj.replace("<user_default_propmt>", user_default_propmt())
-        obj = obj.replace("<user_core_propmt>", user_core_propmt())
+        obj = obj.replace("<core_list>", core_list())#指令目录
+        obj = obj.replace("<core_propmt>", core_propmt_one())#核心指令1
+        obj = obj.replace("</core_propmt>", core_propmt_two())#核心指令2
+        obj = obj.replace("<user_top_propmt>", user_top_propmt())#会话层顶部指令
+        obj = obj.replace("<user_default_propmt>", user_default_propmt())#旁白侧会话指令
+        obj = obj.replace("<user_core_propmt>", user_core_propmt())#通用侧会话指令
+        obj = obj.replace("<super_core_propmt>", super_core_propmt())#超凡侧会话指令
         obj = obj.replace("<core_propmt_deepseek>", core_propmt_deepseek())#todo 如果是deepseek系列模型
         #obj = obj.replace("<core_propmt_deepseek>", "")#todo 如果不是deepseek系列模型；暂时不动这个
         obj = obj.replace("<role_core_propmt>", role_core_propmt())
@@ -98,9 +101,11 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
 
     与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
     - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值统一控制（``{"enabled": true|false}``），
+      开启时额外注入 ``reasoning.effort = "low"``；
       所有经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判；
       非推理模型传该参数会被网关忽略，同时清理旧格式 ``extra_body.thinking`` 避免冲突
-    - DeepSeek 直连 / MiMo 官方 API（api.xiaomimimo.com）: ``thinking = {"type": "enabled"|"disabled"}``
+    - DeepSeek 直连 / MiMo 官方 API（api.xiaomimimo.com）: ``thinking = {"type": "enabled"|"disabled"}``；
+      其中 DeepSeek 开启时额外注入 ``reasoning_effort = "low"``（参考 doc/temp.txt）
     - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
       关闭即移除字段（无 ``type=disabled`` 语义）
     - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
@@ -113,6 +118,9 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
         # OpenRouter 是统一网关：所有经它的推理模型都用官方 reasoning.enabled 布尔值控制，
         # 不按模型名逐个特判；非推理模型传该参数会被网关忽略，无副作用。
         body["reasoning"] = {"enabled": enabled}
+        # 思考模式开启时控制思考深度（OpenRouter 官方 reasoning.effort 格式）
+        if enabled:
+            body["reasoning"]["effort"] = "low"
         # 清理旧格式 extra_body.thinking，避免与官方 reasoning 参数冲突
         extra_body = body.get("extra_body")
         if isinstance(extra_body, dict):
@@ -124,6 +132,12 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     # DeepSeek 原生接口与 MiMo 官方 API 格式一致，均用 thinking.type 控制
     if "deepseek" in name or "mimo" in name or "xiaomimimo" in url:
         body["thinking"] = {"type": "enabled" if enabled else "disabled"}
+        # DeepSeek 思考模式额外支持 reasoning_effort 控制思考深度（参考 doc/temp.txt）
+        if "deepseek" in name:
+            if enabled:
+                body["reasoning_effort"] = "low"
+            else:
+                body.pop("reasoning_effort", None)
     elif "claude" in name:
         if enabled:
             body["thinking"] = {"type": "enabled", "budget_tokens": 10000}
@@ -268,6 +282,31 @@ async def chat_completions(
     llm_purpose = x_starggle_purpose or "main"
     is_async = llm_purpose == "async"
 
+    # ── 会员日限额校验（携带 X-Starggle-User-Id 的用户才校验） ──
+    # 匿名调用（无用户ID）不校验，保持转发原样。
+    # 开关：STARGGLE_ENFORCE_QUOTA=0 关闭（本地调试/压测用）。
+    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in ("1", "true", "yes", "on")
+    if enforce_quota and x_starggle_user_id:
+        level = await call_manage_service.get_effective_membership(db, x_starggle_user_id)
+        daily_limit = get_tier(level).get("dailyLimit", 0)
+        if daily_limit > 0:
+            used = await call_manage_service.get_today_call_count(db, x_starggle_user_id)
+            if used >= daily_limit:
+                logger.info(
+                    "POST /call-manage/chat/completions -> QUOTA user=%s level=%s used=%d limit=%d",
+                    x_starggle_user_id, level, used, daily_limit,
+                )
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "code": "QUOTA_EXCEEDED",
+                        "message": "今日调用次数已达上限，请升级会员",
+                        "level": level,
+                        "used": used,
+                        "dailyLimit": daily_limit,
+                    },
+                )
+
     # ── 从数据库获取可用模型 ──
     target_is_base = "1" if is_async else "0"
     counter_type = "async" if is_async else "primary"
@@ -398,6 +437,7 @@ async def chat_completions(
             total_bytes = 0
             accumulated_chunks: list[bytes] = []
             accumulated_content: list[str] = []  # 收集 delta.content
+            accumulated_reasoning: list[str] = []  # 收集思维链 delta.reasoning_content / delta.reasoning
             accumulated_usage: dict[str, int] = {}  # 收集 usage（prompt/completion/total_tokens）
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
@@ -447,6 +487,10 @@ async def chat_completions(
                                     content = delta.get("content", "")
                                     if content:
                                         accumulated_content.append(content)
+                                    # 思维链字段：DeepSeek 用 reasoning_content，OpenRouter 用 reasoning
+                                    reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                                    if reasoning and isinstance(reasoning, str):
+                                        accumulated_reasoning.append(reasoning)
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 pass
                     yield chunk
@@ -462,6 +506,7 @@ async def chat_completions(
                 await _close_safely(client)
                 elapsed = (time.perf_counter() - t0) * 1000
                 content_text = "".join(accumulated_content)
+                reasoning_text = "".join(accumulated_reasoning)
                 usage_info = ""
                 if accumulated_usage:
                     usage_info = (
@@ -471,9 +516,15 @@ async def chat_completions(
                     )
                 logger.info(
                     "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                    "elapsed=%.0fms total_bytes=%d content_chars=%d%s\n完整返回内容:\n%s",
-                    model_name, elapsed, total_bytes, len(content_text), usage_info, content_text,
+                    "elapsed=%.0fms total_bytes=%d content_chars=%d reasoning_chars=%d%s\n完整返回内容:\n%s",
+                    model_name, elapsed, total_bytes, len(content_text), len(reasoning_text), usage_info, content_text,
                 )
+                # 思维链内容单独打印（思考模式才产生，平时为空避免日志噪音）
+                if reasoning_text:
+                    logger.info(
+                        "POST /call-manage/chat/completions <- STREAM 思维链 model=%s:\n%s",
+                        model_name, reasoning_text,
+                    )
 
                 # 记录 token 用量（非关键路径，失败不影响响应）
                 if x_starggle_user_id and accumulated_usage:

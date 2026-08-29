@@ -12,9 +12,28 @@ from jose import JWTError, jwt
 
 logger = logging.getLogger(__name__)
 
-# 与 StarggleCom 共享同一个 JWT 密钥
+# 与 StarggleCom 共享同一个 JWT 密钥。
+# 注意：未设置 JWT_SECRET_KEY 时会使用代码内默认值（仅限本地开发），
+# 生产环境必须通过环境变量注入随机密钥，否则任何拿到源码的人可伪造 token。
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "stargglechat_jwt_secret_2026")
+if not os.getenv("JWT_SECRET_KEY"):
+    logger.critical(
+        "未设置 JWT_SECRET_KEY，正在使用代码内默认密钥！"
+        "生产环境任何用户可伪造 token，请立即通过环境变量注入随机密钥。"
+    )
 ALGORITHM = "HS256"
+
+# 管理员白名单（逗号分隔的 user_id）。
+# 设置后，/user-manage 等管理端点仅允许白名单内用户访问；
+# 未设置时回落为"任何有效登录用户"，仅建议本地开发使用。
+ADMIN_USER_IDS = {
+    uid.strip() for uid in os.getenv("ADMIN_USER_IDS", "").split(",") if uid.strip()
+}
+if not ADMIN_USER_IDS:
+    logger.critical(
+        "未设置 ADMIN_USER_IDS，管理端接口对全部登录用户开放！"
+        "生产环境请设置管理员用户ID白名单（逗号分隔）。"
+    )
 
 security = HTTPBearer(auto_error=False)
 
@@ -52,4 +71,20 @@ def verify_admin_token(
     if not user_id:
         raise HTTPException(status_code=401, detail="Token 缺少用户标识")
 
+    return user_id
+
+
+async def require_admin_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> str:
+    """管理端点专用依赖：在 verify_admin_token 基础上校验 ADMIN_USER_IDS 白名单。
+
+    未设置 ADMIN_USER_IDS 时不对白名单做限制（回落为任何有效登录用户），
+    仅建议本地开发使用；生产环境务必设置该环境变量。
+    """
+    user_id = verify_admin_token(request, credentials)
+    if ADMIN_USER_IDS and user_id not in ADMIN_USER_IDS:
+        logger.warning("非管理员访问管理端点被拒绝: user_id=%s", user_id)
+        raise HTTPException(status_code=403, detail="无管理员权限")
     return user_id

@@ -9,9 +9,10 @@ import asyncio
 import logging
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.membership import DEFAULT_LEVEL
 from app.models.model_manage_info import ModelManageInfo
 from app.models.user_token_info import UserTokenInfo
 
@@ -115,3 +116,54 @@ async def record_token_usage(
     except Exception as e:
         await db.rollback()
         logger.error("记录 token 用量失败: user_id=%s error=%s", user_id, e)
+
+
+async def get_effective_membership(
+    db: AsyncSession,
+    user_id: str,
+) -> str:
+    """查询用户实际生效的会员等级（积分制：余额即等级，未知用户回落 free）.
+
+    Args:
+        db: 数据库会话.
+        user_id: 用户ID.
+
+    Returns:
+        "free" / "silver" / "gold" / "diamond".
+    """
+    from app.models.user_info import UserInfo
+    from app.config.membership import tier_of_balance
+
+    if not user_id:
+        return DEFAULT_LEVEL
+
+    result = await db.execute(
+        select(UserInfo.point_balance).where(UserInfo.user_id == user_id)
+    )
+    row = result.first()
+    if not row:
+        return DEFAULT_LEVEL
+
+    return tier_of_balance(row[0])["level"]
+
+
+async def get_today_call_count(db: AsyncSession, user_id: str) -> int:
+    """查询用户今日已调用的 LLM 次数（按 user_token_info 明细行数统计）.
+
+    Args:
+        db: 数据库会话.
+        user_id: 用户ID.
+
+    Returns:
+        今日调用次数，无记录返回 0.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(UserTokenInfo)
+        .where(
+            UserTokenInfo.user_id == user_id,
+            UserTokenInfo.record_date == date.today(),
+        )
+    )
+    result = await db.execute(stmt)
+    return int(result.scalar() or 0)
