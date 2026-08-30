@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS model_manage_info
     is_stream     TEXT DEFAULT '1',                 -- 流式：1是0否
     is_base       TEXT DEFAULT '0',                 -- 基础默认模型：1是0否，对应之前的默认deepseek-flash
     is_main       TEXT DEFAULT '0',                 -- 主模型：1是0否
-    extra_config  TEXT,                             --存储语音模型的音色、语速、音调等 JSON 配置
+    extra_config  TEXT,                             -- 存储语音模型的音色、语速、音调等 JSON 配置
     created_at    TIMESTAMP default CURRENT_TIMESTAMP not null,
     updated_at    TIMESTAMP default CURRENT_TIMESTAMP not null,
     remarks        TEXT,                            -- 备注
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS user_token_info
     id                INT AUTO_INCREMENT primary key, -- 自增主键
     user_id           VARCHAR(64)   NOT NULL,         -- 用户ID
     model             VARCHAR(128)  NOT NULL DEFAULT '',   -- 模型名称
-    purpose           VARCHAR(16)   NOT NULL DEFAULT 'main', -- 用途: main/async
+    purpose           VARCHAR(16)   NOT NULL DEFAULT 'main', -- 用途: main/async/async1..async13（异步分路）
     is_stream         INT           NOT NULL DEFAULT 0, -- 是否流式: 1是0否
     prompt_tokens     INT           NOT NULL DEFAULT 0, -- 输入token
     completion_tokens INT           NOT NULL DEFAULT 0, -- 输出token
@@ -54,3 +54,21 @@ CREATE TABLE IF NOT EXISTS orders
     KEY idx_orders_user_id (user_id),
     KEY idx_orders_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
+
+-- 异步LLM总控：13 路异步请求（X-Starggle-Purpose: async1..async13）的分路路由/参数配置
+-- purpose 为业务主键，13 行固定种子数据由启动时 seed_async_manage_configs() 补齐（只插缺失行）
+-- ai_model_id 为空或 is_using='0' 时该路回落 model_manage_info.is_base='1' 基础模型轮询
+-- temperature/max_tokens 为 NULL 表示不覆盖（沿用客户端请求体值）
+CREATE TABLE IF NOT EXISTS async_manage_info
+(
+    purpose      VARCHAR(16)  NOT NULL PRIMARY KEY COMMENT '用途标识: async1..async13（客户端 X-Starggle-Purpose 原值）',
+    request_name VARCHAR(64)  NOT NULL COMMENT '用途中文名（管理页展示）',
+    ai_model_id  VARCHAR(64)  NULL COMMENT '绑定模型ID（指向 model_manage_info.ai_model_id，逻辑引用不建外键）；空=回落轮询',
+    is_think     VARCHAR(1)   NULL DEFAULT '0' COMMENT '请求级思考模式：1强制开/0强制关/NULL跟随客户端不注入（注意与 model_manage_info.is_think 模型属性不同义）',
+    temperature  FLOAT        NULL COMMENT '覆盖请求体temperature；NULL=不覆盖',
+    max_tokens   INT          NULL COMMENT '覆盖请求体max_tokens；NULL=不覆盖',
+    is_using     VARCHAR(1)   NOT NULL DEFAULT '0' COMMENT '是否启用该路配置：1是0否（0=回落轮询）',
+    remarks      TEXT         NULL COMMENT '备注',
+    created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    updated_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='异步LLM总控表';

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>异步LLM总控 - 分路请求管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; padding-bottom: 84px; }
+        h1 { font-size: 22px; margin-bottom: 4px; color: #1a1a1a; }
+        .subtitle { font-size: 13px; color: #999; margin-bottom: 20px; line-height: 1.6; }
+
+        /* 分页Tab */
+        .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid #e8e8e8; }
+        .tab-item { padding: 10px 24px; font-size: 14px; font-weight: 600; cursor: pointer; color: #999; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; user-select: none; }
+        .tab-item:hover { color: #4a90d9; }
+        .tab-item.active { color: #4a90d9; border-bottom-color: #4a90d9; }
+        .tab-badge { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+        .tab-badge.local { background: #e8f5e9; color: #2e7d32; }
+        .tab-badge.international { background: #e3f2fd; color: #1565c0; }
+        .tab-badge.domestic { background: #fff3e0; color: #e65100; }
+
+        .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+        .btn { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+        .btn-primary { background: #4a90d9; color: #fff; }
+        .btn-primary:hover { background: #3a7bc8; }
+        .btn-outline { background: #fff; color: #4a90d9; border: 1px solid #4a90d9; }
+        .btn-outline:hover { background: #eef4fb; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-lock { background: #fff; color: #e67e22; border: 1px solid #e67e22; }
+        .btn-lock:hover { background: #fef5e7; }
+        .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+        th { background: #fafafa; color: #666; font-weight: 600; font-size: 12px; white-space: nowrap; }
+        tr:hover td { background: #f8faff; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .tag-yes { background: #e8f5e9; color: #2e7d32; }
+        .tag-no { background: #fafafa; color: #999; }
+        .tag-fallback { background: #fff3e0; color: #e65100; }
+        .purpose-cell { font-family: monospace; font-weight: 700; color: #1565c0; white-space: nowrap; }
+        .name-cell { white-space: nowrap; font-weight: 600; }
+        td select, td input[type="number"] { padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; outline: none; font-family: inherit; }
+        td select:focus, td input:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.15); }
+        td input[type="number"] { width: 90px; }
+        td select { max-width: 260px; }
+        .num-input-wrap { display: flex; flex-direction: column; gap: 2px; }
+        .num-hint { font-size: 10px; color: #bbb; white-space: nowrap; }
+
+        /* 胶囊开关 */
+        .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; cursor: pointer; vertical-align: middle; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; inset: 0; background: #ccc; border-radius: 24px; transition: background 0.2s; }
+        .toggle-slider::before { content: ''; position: absolute; width: 20px; height: 20px; left: 2px; bottom: 2px; background: #fff; border-radius: 50%; transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+        .toggle-switch input:checked + .toggle-slider { background: #27ae60; }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+        .toggle-switch.loading { opacity: 0.5; pointer-events: none; }
+        .empty { text-align: center; color: #bbb; padding: 40px 0; font-size: 14px; }
+
+        /* 底部固定保存栏（始终可见） */
+        .save-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 100; background: #fff; border-top: 1px solid #e8e8e8; box-shadow: 0 -2px 12px rgba(0,0,0,0.08); padding: 12px 24px; display: flex; align-items: center; justify-content: center; gap: 16px; }
+        .save-bar-hint { font-size: 13px; color: #999; }
+        .save-bar-hint.dirty { color: #e67e22; font-weight: 600; }
+        .save-bar .btn { padding: 9px 32px; }
+        .save-bar .btn:disabled { background: #b8d4ee; cursor: not-allowed; }
+
+        /* Toast */
+        .toast { position: fixed; top: 24px; right: 24px; padding: 12px 24px; border-radius: 8px; color: #fff; font-size: 14px; z-index: 200; animation: slideIn 0.3s; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 420px; }
+        .toast-success { background: #27ae60; }
+        .toast-error { background: #e74c3c; }
+        .toast-warn { background: #e67e22; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+        /* 鉴权遮罩 */
+        .auth-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300; align-items: center; justify-content: center; }
+        .auth-overlay.active { display: flex; }
+        .auth-card { background: #fff; border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.25); padding: 40px 36px 28px; width: 380px; text-align: center; }
+        .auth-card .auth-icon { font-size: 40px; margin-bottom: 12px; }
+        .auth-card h2 { font-size: 18px; margin-bottom: 6px; color: #1a1a1a; }
+        .auth-card .auth-hint { font-size: 12px; color: #999; margin-bottom: 20px; }
+        .auth-card input { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; text-align: center; font-family: monospace; letter-spacing: 2px; }
+        .auth-card input:focus { border-color: #4a90d9; box-shadow: 0 0 0 3px rgba(74,144,217,0.15); }
+        .auth-card .auth-error { font-size: 12px; color: #e74c3c; margin-top: 8px; min-height: 18px; }
+        .auth-card .btn { margin-top: 16px; width: 100%; padding: 10px 0; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎛 异步LLM总控</h1>
+        <p class="subtitle">
+            管理安卓端 13 路异步LLM请求（async1..async13）的模型路由与参数。每路可绑定独立模型并接管 思考模式/temperature/max_tokens；
+            思考模式支持 跟随客户端（不干预）/强制开启/强制关闭 三态；绑定模型为空或该路停用时，回落到「模型管理」中基础模型（is_base=1）的轮询。
+            修改任意行后点底部「保存全部改动」一次性提交，保存后立即生效。
+        </p>
+
+        <!-- 分页Tab -->
+        <div class="tab-bar">
+            <div class="tab-item active" id="tabLocal" onclick="switchTab('local')">
+                📍 本地<span class="tab-badge local">LOCAL</span>
+            </div>
+            <div class="tab-item" id="tabInternational" onclick="switchTab('international')">
+                🌍 国际<span class="tab-badge international">INTERNATIONAL</span>
+            </div>
+            <div class="tab-item" id="tabDomestic" onclick="switchTab('domestic')">
+                🇨🇳 国内<span class="tab-badge domestic">DOMESTIC</span>
+            </div>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <button class="btn btn-primary" onclick="loadAll()">🔄 刷新</button>
+            <button class="btn btn-lock btn-sm" id="btnLock" onclick="lockPage()" title="锁定管理页">🔒 锁定</button>
+        </div>
+
+        <!-- 数据表格：固定 13 行 -->
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>purpose</th>
+                        <th>请求用途</th>
+                        <th>绑定模型（空=回落轮询）</th>
+                        <th>思考模式</th>
+                        <th>temperature</th>
+                        <th>max_tokens</th>
+                        <th>启用配置</th>
+                        <th>备注</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+            <div id="emptyMsg" class="empty" style="display:none">未初始化：总控表无数据，请重启服务（启动时自动补齐 13 行种子配置）</div>
+        </div>
+    </div>
+
+    <!-- 底部固定保存栏：全页唯一保存入口，始终可见 -->
+    <div class="save-bar">
+        <span class="save-bar-hint" id="saveHint">无改动</span>
+        <button class="btn btn-primary" id="btnSaveAll" onclick="saveAll()" disabled>保存全部改动</button>
+    </div>
+
+    <!-- 鉴权遮罩 -->
+    <div class="auth-overlay active" id="authOverlay">
+        <div class="auth-card">
+            <div class="auth-icon">🔐</div>
+            <h2>管理员登录</h2>
+            <p class="auth-hint" id="authHint">使用 StarggleChat 账号登录</p>
+            <input type="email" id="authEmail" placeholder="邮箱地址"
+                   onkeydown="if(event.key==='Enter')document.getElementById('authPassword').focus()">
+            <input type="password" id="authPassword" placeholder="密码" style="margin-top:10px;"
+                   onkeydown="if(event.key==='Enter')doUnlock()">
+            <div class="auth-error" id="authError"></div>
+            <button class="btn btn-primary" id="authBtn" onclick="doUnlock()">登 录</button>
+        </div>
+    </div>
+
+    <script>
+        // ========== 固定 13 路注册表（与服务端 ASYNC_PURPOSE_SEED / 安卓端 ServerConfig.AsyncPurpose 一一对应） ==========
+        const PURPOSE_SEED = [
+            ['async1',  '冒险正文摘要'],
+            ['async2',  '老旧记忆总结'],
+            ['async3',  '世界基础构建'],
+            ['async4',  '记忆摘要与条件任务'],
+            ['async5',  '导演A·弧线方向'],
+            ['async6',  '导演B·剧情指导'],
+            ['async7',  '导演C·复盘'],
+            ['async8',  '导演D·角色谋划'],
+            ['async9',  '角色快照'],
+            ['async10', '记忆索引'],
+            ['async11', '世界状态对账'],
+            ['async12', 'NPC对账'],
+            ['async13', '通用后台对话'],
+        ];
+
+        // ========== JWT 鉴权（复用 StarggleChat 账号，与模型管理页共享 token） ==========
+        const STORAGE_KEY = 'starggle_admin_jwt';
+        let _adminToken = null;
+
+        function checkAuth() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                _adminToken = saved;
+                document.getElementById('authOverlay').classList.remove('active');
+                document.getElementById('btnLock').style.display = '';
+                return true;
+            }
+            // 本地模式不需要登录
+            if (API_BASE === API_TARGETS['local']) {
+                document.getElementById('authOverlay').classList.remove('active');
+                document.getElementById('btnLock').style.display = 'none';
+                return true;
+            }
+            showAuthOverlay();
+            return false;
+        }
+
+        function showAuthOverlay() {
+            document.getElementById('authOverlay').classList.add('active');
+            document.getElementById('authEmail').value = '';
+            document.getElementById('authPassword').value = '';
+            document.getElementById('authError').textContent = '';
+            document.getElementById('btnLock').style.display = 'none';
+            setTimeout(() => document.getElementById('authEmail').focus(), 100);
+        }
+
+        function getLoginUrl() {
+            if (API_BASE === API_TARGETS['local']) {
+                return '/api/v1/auth/login';
+            }
+            return 'https://www.starggle.com/api/v1/auth/login';
+        }
+
+        async function doUnlock() {
+            const email = document.getElementById('authEmail').value.trim();
+            const pwd = document.getElementById('authPassword').value.trim();
+            const errEl = document.getElementById('authError');
+            const btn = document.getElementById('authBtn');
+
+            if (!email) { errEl.textContent = '请输入邮箱'; return; }
+            if (!pwd) { errEl.textContent = '请输入密码'; return; }
+
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            errEl.textContent = '';
+
+            try {
+                const res = await fetch(getLoginUrl(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password: pwd })
+                });
+                const result = await res.json();
+
+                if (result?.data?.success) {
+                    _adminToken = result.data.token;
+                    localStorage.setItem(STORAGE_KEY, _adminToken);
+                    document.getElementById('authOverlay').classList.remove('active');
+                    document.getElementById('btnLock').style.display = '';
+                    toast('登录成功，欢迎 ' + (result.data.user?.userName || email));
+                    loadAll();
+                } else {
+                    errEl.textContent = result?.data?.message || '登录失败';
+                    document.getElementById('authPassword').value = '';
+                    document.getElementById('authPassword').focus();
+                }
+            } catch (e) {
+                errEl.textContent = '网络错误，请检查连接';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登 录';
+            }
+        }
+
+        function lockPage() {
+            _adminToken = null;
+            localStorage.removeItem(STORAGE_KEY);
+            showAuthOverlay();
+            document.getElementById('tableBody').innerHTML = '';
+            for (const k of Object.keys(_snapshots)) delete _snapshots[k];
+            updateSaveBar();
+        }
+
+        // ========== 环境切换 ==========
+        const API_TARGETS = {
+            local: '/api/v1/async-manage',
+            international: 'https://www.starggle.com/api/v1/async-manage',
+            domestic: 'http://124.221.134.139/api/v1/async-manage'
+        };
+        let API_BASE = API_TARGETS['local'];
+
+        // 模型下拉数据来自「模型管理」接口（同环境前缀替换）
+        function modelApiBase() {
+            return API_BASE.replace('/async-manage', '/model-manage');
+        }
+
+        function switchTab(target) {
+            API_BASE = API_TARGETS[target];
+            document.getElementById('tabLocal').classList.toggle('active', target === 'local');
+            document.getElementById('tabInternational').classList.toggle('active', target === 'international');
+            document.getElementById('tabDomestic').classList.toggle('active', target === 'domestic');
+            _modelOptions = [];
+            checkAuth();
+            loadAll();
+        }
+
+        // ========== 通用工具 ==========
+        function toast(msg, ok = true) {
+            const el = document.createElement('div');
+            el.className = 'toast ' + (ok === true ? 'toast-success' : (ok === 'warn' ? 'toast-warn' : 'toast-error'));
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 2500);
+        }
+
+        function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+        async function api(method, path, body, base) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (_adminToken) headers['Authorization'] = 'Bearer ' + _adminToken;
+            const opts = { method, headers };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch((base || API_BASE) + path, opts);
+            if (res.status === 401) {
+                showAuthOverlay();
+                throw new Error('Unauthorized');
+            }
+            return res.json();
+        }
+
+        // ========== 模型下拉数据 ==========
+        let _modelOptions = [];  // [{id, label}]
+
+        async function loadModelOptions() {
+            try {
+                const result = await api('GET', '/list?is_using=1', null, modelApiBase());
+                const list = result?.data?.list || [];
+                _modelOptions = list.map(m => ({
+                    id: m.aiModelId,
+                    label: `${m.aiModelName}（${m.comName}）`
+                }));
+            } catch (e) {
+                _modelOptions = [];
+            }
+        }
+
+        function modelSelectHtml(purpose, selectedId) {
+            let options = `<option value="" ${!selectedId ? 'selected' : ''}>未配置（回落轮询）</option>`;
+            // 当前绑定的模型不在启用列表中（已停用/已删除/列表加载失败）时保留绑定值，
+            // 避免 select 自动落回「未配置」后点保存静默清空绑定
+            if (selectedId && !_modelOptions.some(m => m.id === selectedId)) {
+                options += `<option value="${esc(selectedId)}" selected>当前绑定（模型已停用或列表加载失败）</option>`;
+            }
+            for (const m of _modelOptions) {
+                options += `<option value="${esc(m.id)}" ${m.id === selectedId ? 'selected' : ''}>${esc(m.label)}</option>`;
+            }
+            return `<select id="sel_${purpose}">${options}</select>`;
+        }
+
+        // ========== 渲染 + 加载 ==========
+        function renderRows(dataMap) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = PURPOSE_SEED.map(([purpose, name]) => {
+                const cfg = dataMap.get(purpose);
+                if (!cfg) {
+                    return `<tr>
+                        <td class="purpose-cell">${purpose}</td>
+                        <td class="name-cell">${esc(name)}</td>
+                        <td colspan="6" style="color:#bbb">未初始化（数据库缺行，请重启服务自动补齐）</td>
+                    </tr>`;
+                }
+                const bound = cfg.aiModelId || '';
+                const isThink = cfg.isThink;   // '1'强制开 / '0'强制关 / null跟随客户端
+                const temp = (cfg.temperature === null || cfg.temperature === undefined) ? '' : cfg.temperature;
+                const maxTok = (cfg.maxTokens === null || cfg.maxTokens === undefined) ? '' : cfg.maxTokens;
+                return `<tr>
+                    <td class="purpose-cell">${purpose}</td>
+                    <td class="name-cell" title="${esc(cfg.requestName)}">${esc(cfg.requestName)}</td>
+                    <td>${modelSelectHtml(purpose, bound)}</td>
+                    <td><select id="think_${purpose}" title="跟随客户端=不注入思考参数，请求体原样透传">
+                        <option value="" ${!isThink ? 'selected' : ''}>跟随客户端（不干预）</option>
+                        <option value="1" ${isThink === '1' ? 'selected' : ''}>强制开启思考</option>
+                        <option value="0" ${isThink === '0' ? 'selected' : ''}>强制关闭思考</option>
+                    </select></td>
+                    <td><div class="num-input-wrap">
+                        <input type="number" id="temp_${purpose}" step="0.1" min="0" max="2" placeholder="不覆盖" value="${temp}">
+                        <span class="num-hint">空=沿用客户端值</span>
+                    </div></td>
+                    <td><div class="num-input-wrap">
+                        <input type="number" id="tok_${purpose}" min="1" placeholder="不覆盖" value="${maxTok}">
+                        <span class="num-hint">空=沿用客户端值</span>
+                    </div></td>
+                    <td><label class="toggle-switch">
+                        <input type="checkbox" id="using_${purpose}" ${cfg.isUsing === '1' ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label></td>
+                    <td><input type="text" id="remark_${purpose}" value="${esc(cfg.remarks)}" style="width:160px" placeholder="备注"></td>
+                </tr>`;
+            }).join('');
+            // 全量重渲染后以页面当前值为新快照基准，并刷新保存栏计数
+            for (const [purpose] of PURPOSE_SEED) {
+                if (dataMap.get(purpose)) snapshotRow(purpose);
+            }
+            updateSaveBar();
+        }
+
+        async function loadAll() {
+            if (!checkAuth()) return;
+            await loadModelOptions();
+            try {
+                const result = await api('GET', '/list');
+                const list = result?.data?.list || [];
+                const dataMap = new Map(list.map(c => [c.purpose, c]));
+                renderRows(dataMap);
+                document.getElementById('emptyMsg').style.display = list.length === 0 ? 'block' : 'none';
+            } catch (e) {
+                if (e.message !== 'Unauthorized') toast('加载失败: ' + e.message, false);
+            }
+        }
+
+        // ========== 行值采集 / 快照 diff / 统一保存 ==========
+        const _snapshots = {};  // purpose -> 渲染时的规范化初始值，作为改动判定基准
+
+        // 读取某行页面当前值（未初始化行无输入元素，字段为 undefined）
+        function readRow(purpose) {
+            return {
+                ai_model_id: document.getElementById(`sel_${purpose}`)?.value,
+                is_think: document.getElementById(`think_${purpose}`)?.value,
+                temperature: document.getElementById(`temp_${purpose}`)?.value?.trim(),
+                max_tokens: document.getElementById(`tok_${purpose}`)?.value?.trim(),
+                is_using: document.getElementById(`using_${purpose}`)?.checked ? '1' : '0',
+                remarks: document.getElementById(`remark_${purpose}`)?.value?.trim(),
+            };
+        }
+
+        // 规范化为与提交 body 同构的可比较形态（空值统一为 ''，便于 diff）
+        function normalizeRow(raw) {
+            return {
+                ai_model_id: raw.ai_model_id ?? '',
+                is_think: raw.is_think ?? '',
+                temperature: raw.temperature ?? '',
+                max_tokens: raw.max_tokens ?? '',
+                is_using: raw.is_using ?? '0',
+                remarks: raw.remarks ?? '',
+            };
+        }
+
+        function snapshotRow(purpose) {
+            _snapshots[purpose] = normalizeRow(readRow(purpose));
+        }
+
+        function isDirty(purpose) {
+            const snap = _snapshots[purpose];
+            if (!snap) return false;
+            return JSON.stringify(normalizeRow(readRow(purpose))) !== JSON.stringify(snap);
+        }
+
+        function dirtyPurposes() {
+            return Object.keys(_snapshots).filter(isDirty);
+        }
+
+        // 保存栏计数与按钮态联动（tbody 上的 input/change 事件委托触发）
+        function updateSaveBar() {
+            const n = dirtyPurposes().length;
+            const hint = document.getElementById('saveHint');
+            const btn = document.getElementById('btnSaveAll');
+            hint.textContent = n > 0 ? `${n} 处修改未保存` : '无改动';
+            hint.classList.toggle('dirty', n > 0);
+            btn.disabled = n === 0;
+        }
+
+        // 组装 PUT body（空串归一：模型绑定→'' 清空绑定；思考→null 跟随客户端；数值→null 不覆盖）
+        function buildBody(purpose) {
+            const r = readRow(purpose);
+            return {
+                ai_model_id: r.ai_model_id,       // 空串=清空绑定（服务端归一为 NULL → 回落轮询）
+                is_think: r.is_think === '' ? null : r.is_think,   // null=跟随客户端（服务端存 NULL → 不注入）
+                temperature: r.temperature ? parseFloat(r.temperature) : null,
+                max_tokens: r.max_tokens ? parseInt(r.max_tokens, 10) : null,
+                is_using: r.is_using,
+                remarks: r.remarks || null,
+            };
+        }
+
+        // 统一保存：只提交有改动的行（并发 PUT），先整体校验再提交
+        async function saveAll() {
+            const btn = document.getElementById('btnSaveAll');
+            const purposes = dirtyPurposes();
+            if (purposes.length === 0) return;
+
+            const bodies = {}, submittedSnap = {};
+            for (const p of purposes) {
+                const body = buildBody(p);
+                if (body.temperature !== null && (isNaN(body.temperature) || body.temperature < 0 || body.temperature > 2)) {
+                    toast(`${p} 的 temperature 需在 0~2 之间`, false);
+                    return;
+                }
+                if (body.max_tokens !== null && (isNaN(body.max_tokens) || body.max_tokens < 1)) {
+                    toast(`${p} 的 max_tokens 需为正整数`, false);
+                    return;
+                }
+                bodies[p] = body;
+                submittedSnap[p] = normalizeRow(readRow(p));   // 提交时刻快照（保存期间的新编辑不并入本次基准）
+            }
+
+            // 开思考且 max_tokens 较小时提示思维链会吃掉输出预算（不阻断）
+            const thinkWarn = purposes.filter(p => bodies[p].is_think === '1' && bodies[p].max_tokens !== null && bodies[p].max_tokens < 2000);
+            if (thinkWarn.length > 0) {
+                toast(`注意：${thinkWarn.join('、')} 开启思考后思维链会消耗 max_tokens 预算，输出可能被截断，建议调大或留空`, 'warn');
+            }
+
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            try {
+                const results = await Promise.allSettled(purposes.map(p => api('PUT', '/' + p, bodies[p])));
+                const failed = [];
+                results.forEach((res, i) => {
+                    const p = purposes[i];
+                    if (res.status === 'fulfilled' && res.value?.code === 200) {
+                        _snapshots[p] = submittedSnap[p];   // 以提交时刻的值为新基准
+                    } else {
+                        const msg = res.status === 'fulfilled' ? (res.value?.message || '保存失败') : (res.reason?.message || '网络错误');
+                        failed.push(`${p}: ${msg}`);
+                    }
+                });
+                if (failed.length === 0) {
+                    toast(`已保存 ${purposes.length} 项配置，下一请求即生效`);
+                } else if (failed.some(f => f.includes('Unauthorized'))) {
+                    showAuthOverlay();
+                } else {
+                    toast(`部分保存失败 → ${failed.join('；')}`, false);
+                }
+            } catch (e) {
+                if (e.message !== 'Unauthorized') toast('保存失败: ' + e.message, false);
+            } finally {
+                btn.textContent = '保存全部改动';
+                updateSaveBar();
+            }
+        }
+
+        // ========== 启动 ==========
+        // 任意行输入变化 → 联动保存栏计数（tbody 元素复用，innerHTML 替换不影响委托监听）
+        document.getElementById('tableBody').addEventListener('input', updateSaveBar);
+        document.getElementById('tableBody').addEventListener('change', updateSaveBar);
+        checkAuth();
+        loadAll();
+    </script>
+</body>
+</html>

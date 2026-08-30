@@ -161,6 +161,12 @@ async def user_manage_page():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/async-manage", response_class=HTMLResponse)
+async def async_manage_page():
+    html_path = BASE_DIR / "templates" / "async_manage.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     import uvicorn
     import asyncio

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.config.membership import get_tier
-from app.services import call_manage_service
+from app.services import call_manage_service, async_manage_service, model_manage_service
 from app.utils.response import ResponseFactory
 from propmt import (core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek,
                     user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt)
@@ -31,6 +31,15 @@ router = APIRouter()
 
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
+
+# ── 异步LLM总控 purpose 识别（async1..async13，与 async_manage_info.purpose 对应）──
+_ASYNC_PURPOSE_RE = re.compile(r"^async([1-9]|1[0-3])$")
+
+# ── o 系列模型（上游不支持 response_format / 非默认 temperature）──
+_O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
+
+# ── Claude 思考模式默认预算（_apply_thinking_params 注入与预算收敛共用）──
+_CLAUDE_THINKING_BUDGET = 10000
 
 # ── SSRF 防护：禁止的目标地址 ──
 _BLOCKED_HOSTS = frozenset({
@@ -140,7 +149,7 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
                 body.pop("reasoning_effort", None)
     elif "claude" in name:
         if enabled:
-            body["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+            body["thinking"] = {"type": "enabled", "budget_tokens": _CLAUDE_THINKING_BUDGET}
         else:
             body.pop("thinking", None)
     elif "qwen" in name:
@@ -270,17 +279,28 @@ async def chat_completions(
 
     Headers:
         Authorization: 可选的 Bearer token（主 LLM 模式下可覆盖 DB 中的 api_key）.
-        X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型）或
-                            "async"（使用 is_base="1" 的基础模型）.
+        X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型）、
+                            "async"（使用 is_base="1" 的基础模型）或
+                            "async1".."async13"（异步LLM总控分路，命中 async_manage_info
+                            且启用且已绑定模型时按配置路由并接管 model/思考/temperature/max_tokens，
+                            否则回落 "async" 轮询逻辑）.
         X-Starggle-Thinking: 主 LLM 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
                              服务端按选中模型/运营商的参数规范注入思考参数；
-                             异步模式固定关闭思考，不受此头影响.
+                             异步模式不受此头影响（思考模式由总控 is_think 决定：'1'强制开/'0'强制关/NULL跟随客户端不注入，未命中总控强制关闭）.
 
     请求体: 标准 OpenAI chat completions 格式.
     """
     t0 = time.perf_counter()
     llm_purpose = x_starggle_purpose or "main"
-    is_async = llm_purpose == "async"
+    # 任何 async* 都按异步计（含 async1..13 与未知 async99 等），
+    # 防止未知 purpose 串到主模型路由使用客户端 Authorization key
+    is_async = llm_purpose == "async" or llm_purpose.startswith("async")
+
+    # ── 异步LLM总控：async1..13 命中总控表且启用且已绑定模型时走配置路由，否则回落轮询 ──
+    purpose_cfg = None
+    if _ASYNC_PURPOSE_RE.match(llm_purpose):
+        purpose_cfg = await async_manage_service.get_config_by_purpose(db, llm_purpose)
+    use_config = bool(purpose_cfg and purpose_cfg.is_using == "1" and purpose_cfg.ai_model_id)
 
     # ── 会员日限额校验（携带 X-Starggle-User-Id 的用户才校验） ──
     # 匿名调用（无用户ID）不校验，保持转发原样。
@@ -308,18 +328,37 @@ async def chat_completions(
                 )
 
     # ── 从数据库获取可用模型 ──
-    target_is_base = "1" if is_async else "0"
-    counter_type = "async" if is_async else "primary"
-    models = await call_manage_service.get_active_models(db, is_base=target_is_base)
+    # 总控优先：purpose 命中且启用且已绑定模型时直接点查绑定模型（不查 is_base、不走轮询，
+    # 允许绑定主模型池的模型——如导演A/B对齐主LLM）；绑定失效则回落 is_base=1 轮询
+    selected = None
+    if use_config:
+        bound = await model_manage_service.get_model_by_id(db, purpose_cfg.ai_model_id)
+        if bound is None or bound.is_using != "1":
+            logger.warning(
+                "POST /call-manage/chat/completions -> purpose=%s 绑定模型 %s 不存在或停用，回落 is_base=1 轮询",
+                llm_purpose, purpose_cfg.ai_model_id,
+            )
+            use_config = False
+        else:
+            selected = bound
+            logger.info(
+                "POST /call-manage/chat/completions -> purpose=%s 命中异步LLM总控: model=%r com=%s is_think=%s",
+                llm_purpose, selected.ai_model_name, selected.com_name, purpose_cfg.is_think,
+            )
 
-    if not models:
-        logger.error("没有可用的 %s 模型（is_using=1, is_base=%s）", llm_purpose, target_is_base)
-        raise HTTPException(
-            status_code=503,
-            detail=f"没有可用的{'异步' if is_async else '主'} LLM 模型，请检查 model_manage_info 表配置",
-        )
+    if selected is None:
+        target_is_base = "1" if is_async else "0"
+        counter_type = "async" if is_async else "primary"
+        models = await call_manage_service.get_active_models(db, is_base=target_is_base)
 
-    selected = await call_manage_service.next_model(models, counter_type)
+        if not models:
+            logger.error("没有可用的 %s 模型（is_using=1, is_base=%s）", llm_purpose, target_is_base)
+            raise HTTPException(
+                status_code=503,
+                detail=f"没有可用的{'异步' if is_async else '主'} LLM 模型，请检查 model_manage_info 表配置",
+            )
+
+        selected = await call_manage_service.next_model(models, counter_type)
 
     logger.info(
         "POST /call-manage/chat/completions -> 选中模型详情: ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s is_base=%s",
@@ -353,14 +392,11 @@ async def chat_completions(
     body = await request.json()
     body = _replace_core_prompts(body)
 
-    # 异步模式：关闭思考模式（兼容 deepseek 等推理模型）
-    if is_async:
-        _apply_thinking_params(body, selected.ai_model_name, selected.com_url, False)
+    # （思考模式注入统一移至下方 model 名解析之后：异步按总控 is_think，主模式按 X-Starggle-Thinking 头）
 
     # ── response_format 注入 ──
     # 客户端通过 X-Starggle-Response-Format header 声明需要 JSON 输出，
     # 服务端根据实际模型决定是否/如何注入 response_format。
-    _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
     if x_starggle_response_format == "json_object":
         model_name_lower = selected.ai_model_name.lower()
         is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
@@ -393,15 +429,71 @@ async def chat_completions(
             model_name,
         )
 
-    # 主 LLM 思考模式注入：由 X-Starggle-Thinking 头控制，按选中模型/运营商的参数规范构造。
-    # 异步模式（is_async）固定关闭思考，不受此头影响。
-    if not is_async and x_starggle_thinking is not None:
-        thinking_enabled = x_starggle_thinking.strip().lower() in ("1", "true", "yes", "on", "enabled")
-        _apply_thinking_params(body, model_name, selected.com_url, thinking_enabled)
+    # ── 思考模式开关判定 ──
+    # 异步模式：总控配置 is_think 决定 —— "1"强制开 / "0"强制关 / None跟随客户端（think_enabled 保持 None → 不注入，请求体原样透传）；
+    #           未命中总控的裸 async/回落一律强制关闭（兼容推理模型）
+    # 主模式：由 X-Starggle-Thinking 头控制；缺头不注入，保持请求体原样
+    think_enabled: Optional[bool] = None
+    if is_async:
+        think_enabled = {"1": True, "0": False}.get(purpose_cfg.is_think) if use_config else False
+    elif x_starggle_thinking is not None:
+        think_enabled = x_starggle_thinking.strip().lower() in ("1", "true", "yes", "on", "enabled")
         logger.info(
             "POST /call-manage/chat/completions -> X-Starggle-Thinking=%r enabled=%s model=%s",
-            x_starggle_thinking, thinking_enabled, model_name,
+            x_starggle_thinking, think_enabled, model_name,
         )
+
+    # ── 异步LLM总控参数覆盖：模型/temperature/max_tokens 服务端接管 ──
+    # 客户端 body 里的值仅作未配置回落时的默认。
+    # 覆盖豁免：o 系列不支持非默认 temperature；Claude 思考模式要求 temperature 固定为 1。
+    # （Claude 思考与 max_tokens 的预算冲突在下方思考注入后统一收敛，此处无需跳过覆盖）
+    if use_config:
+        body["model"] = selected.ai_model_name
+        model_name = selected.ai_model_name
+        model_name_lower = model_name.lower()
+        is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
+        is_claude = "claude" in model_name_lower
+        # 思考是否（将）开启：强制开=True；跟随客户端（think_enabled=None）时看请求体自带思考标记。
+        # Claude 思考模式要求 temperature 固定为 1（Anthropic 硬约束），开启时跳过 temperature 覆盖避免上游 400。
+        body_thinking = body.get("thinking")
+        client_think_on = (
+            (isinstance(body_thinking, dict) and body_thinking.get("type") == "enabled")
+            or body.get("reasoning_effort") is not None
+        )
+        think_on = think_enabled is True or (think_enabled is None and client_think_on)
+        if purpose_cfg.temperature is not None and not is_o_series and not (is_claude and think_on):
+            body["temperature"] = purpose_cfg.temperature
+        if purpose_cfg.max_tokens is not None:
+            body["max_tokens"] = purpose_cfg.max_tokens
+        logger.info(
+            "POST /call-manage/chat/completions -> purpose=%s 总控覆盖: model=%r temperature=%r max_tokens=%r",
+            llm_purpose, body.get("model"), body.get("temperature"), body.get("max_tokens"),
+        )
+
+    # ── 思考参数注入：按选中模型/运营商的参数规范构造 ──
+    if think_enabled is not None:
+        _apply_thinking_params(body, model_name, selected.com_url, think_enabled)
+        # Claude 思考模式：budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
+        # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
+        # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
+        if think_enabled and "claude" in model_name.lower():
+            thinking = body.get("thinking")
+            if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                max_tokens = body.get("max_tokens")
+                if isinstance(max_tokens, int) and max_tokens <= _CLAUDE_THINKING_BUDGET:
+                    budget = max_tokens - 1024
+                    if budget >= 1024:
+                        thinking["budget_tokens"] = budget
+                        logger.info(
+                            "POST /call-manage/chat/completions -> Claude 思考 budget 收敛为 %d（max_tokens=%s）",
+                            budget, max_tokens,
+                        )
+                    else:
+                        thinking["type"] = "disabled"
+                        logger.warning(
+                            "POST /call-manage/chat/completions -> max_tokens=%s 不足以容纳 Claude 思考最低预算(1024)，已关闭思考",
+                            max_tokens,
+                        )
 
     # 提供商路由参数注入（OpenRouter）：把 model_manage_info.extra_config.provider 塞进请求体顶层 provider
     _apply_provider_params(body, selected)

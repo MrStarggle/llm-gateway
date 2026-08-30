@@ -84,6 +84,7 @@ async def init_database():
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
         from app.models.user_info import UserInfo  # noqa: F401
         from app.models.order_info import OrderInfo  # noqa: F401
+        from app.models.async_manage_info import AsyncManageInfo  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
@@ -107,6 +108,10 @@ async def init_database():
 
         # 3. 数据库迁移
         await run_migrations()
+
+        # 3.5 异步LLM总控种子数据（13 路固定配置，只补缺失行）
+        from app.services.async_manage_service import seed_async_manage_configs
+        await seed_async_manage_configs()
 
         # 4. 验证表列表
         async with engine.connect() as conn:
@@ -142,6 +147,8 @@ async def run_migrations():
         "ALTER TABLE user_info MODIFY COLUMN membership_level VARCHAR(32) NULL DEFAULT 'free' COMMENT '会员等级: free/plus/pro'",
         "UPDATE user_info SET membership_level = 'free' WHERE membership_level = '1'",
         "UPDATE user_info SET membership_level = 'plus' WHERE membership_level = '2'",
+        # 异步LLM总控：is_think 改为三态（1强制开/0强制关/NULL跟随客户端不注入），存量 '0'/'1' 语义不变
+        "ALTER TABLE async_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '请求级思考模式：1强制开/0强制关/NULL跟随客户端（不注入）'",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

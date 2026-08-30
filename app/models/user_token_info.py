@@ -9,7 +9,7 @@ class UserTokenInfo(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, comment="自增主键")
     user_id = Column(String(64), nullable=False, index=True, comment="用户ID")
     model = Column(String(128), nullable=False, server_default="", comment="模型名称")
-    purpose = Column(String(16), nullable=False, server_default="main", comment="用途: main/async")
+    purpose = Column(String(16), nullable=False, server_default="main", comment="用途: main/async/async1..async13（异步分路）")
     is_stream = Column(Integer, nullable=False, server_default="0", comment="是否流式: 1是0否")
     prompt_tokens = Column(Integer, nullable=False, server_default="0", comment="输入token")
     completion_tokens = Column(Integer, nullable=False, server_default="0", comment="输出token")

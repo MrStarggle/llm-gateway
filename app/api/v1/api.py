@@ -4,6 +4,7 @@ from app.api.v1.controller import (
     call_manage_controller,
     auth_controller,
     user_manage_controller,
+    async_manage_controller,
 )
 
 
@@ -36,5 +37,12 @@ api_router.include_router(
     call_manage_controller.router,
     prefix="/call-manage",
     tags=["LLM调用管理"]
+)
+
+# 异步LLM总控
+api_router.include_router(
+    async_manage_controller.router,
+    prefix="/async-manage",
+    tags=["异步LLM总控"]
 )
 
