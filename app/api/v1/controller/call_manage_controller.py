@@ -23,7 +23,8 @@ from app.config.membership import get_tier
 from app.services import call_manage_service, async_manage_service, model_manage_service
 from app.utils.response import ResponseFactory
 from propmt import (core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek,
-                    user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt)
+                    user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt, user_active_propmt,
+                    user_sec_propmt, ai_sec_propmt)
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,10 @@ def _replace_core_prompts(obj: Any) -> Any:
         obj = obj.replace("<user_top_propmt>", user_top_propmt())#会话层顶部指令
         obj = obj.replace("<user_default_propmt>", user_default_propmt())#旁白侧会话指令
         obj = obj.replace("<user_core_propmt>", user_core_propmt())#通用侧会话指令
+        obj = obj.replace("<user_active_propmt>", user_active_propmt())#主动消息触发
         obj = obj.replace("<super_core_propmt>", super_core_propmt())#超凡侧会话指令
+        obj = obj.replace("<user_sec_propmt>", user_sec_propmt())  # 用户会话层顶部第二条指令
+        obj = obj.replace("<ai_sec_propmt>", ai_sec_propmt())  # AI会话层顶部第二条指令
         obj = obj.replace("<core_propmt_deepseek>", core_propmt_deepseek())#todo 如果是deepseek系列模型
         #obj = obj.replace("<core_propmt_deepseek>", "")#todo 如果不是deepseek系列模型；暂时不动这个
         obj = obj.replace("<role_core_propmt>", role_core_propmt())
