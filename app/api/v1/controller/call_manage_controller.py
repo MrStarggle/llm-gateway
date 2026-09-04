@@ -196,6 +196,44 @@ def _apply_provider_params(body: dict, selected) -> None:
     )
 
 
+# ── Gemini 安全阈值（_apply_gemini_safety 注入 extra_body.safety_settings）──
+_GEMINI_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
+
+
+# ── Gemini 安全阈值注入 ──
+def _apply_gemini_safety(body: dict, model_name: str) -> None:
+    """Gemini 系模型关闭安全拦截：extra_body.safety_settings 四类全部 BLOCK_NONE.
+
+    与客户端 CallModelStreamService 的 Gemini 分支保持一致（extra_body 字面键，
+    经 OpenRouter 透传）。合并不覆盖：客户端已显式传 extra_body.safety_settings
+    时保留客户端值；extra_body 已存在（如其他参数）时只补 safety_settings 键。
+    """
+    if "gemini" not in (model_name or "").lower():
+        return
+    extra_body = body.get("extra_body")
+    if not isinstance(extra_body, dict):
+        if extra_body is not None:
+            logger.warning(
+                "Gemini safety_settings：客户端 extra_body 非对象(%r)，丢弃后注入", extra_body,
+            )
+        extra_body = {}
+        body["extra_body"] = extra_body
+    if "safety_settings" in extra_body:
+        logger.info(
+            "Gemini safety_settings：客户端已显式传入，跳过注入 model=%s", model_name,
+        )
+        return
+    # 深拷贝注入：常量是模块级共享对象，本文件惯例是原地改 body，
+    # 引用共享会让未来任何原地修改跨请求串状态
+    extra_body["safety_settings"] = [dict(s) for s in _GEMINI_SAFETY_SETTINGS]
+    logger.info("注入 Gemini safety_settings(BLOCK_NONE): model=%s", model_name)
+
+
 # ── httpx 安全关闭 ──
 async def _close_safely(obj: Optional[object]) -> None:
     """安全关闭 httpx 客户端或响应，避免 finally 中异常覆盖原始错误."""
@@ -283,11 +321,10 @@ async def chat_completions(
 
     Headers:
         Authorization: 可选的 Bearer token（主 LLM 模式下可覆盖 DB 中的 api_key）.
-        X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型）、
-                            "async"（使用 is_base="1" 的基础模型）或
-                            "async1".."async13"（异步LLM总控分路，命中 async_manage_info
+        X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型轮询）、
+                            "async" 或 "async1".."async13"（异步LLM总控分路：命中 async_manage_info
                             且启用且已绑定模型时按配置路由并接管 model/思考/temperature/max_tokens，
-                            否则回落 "async" 轮询逻辑）.
+                            否则回落 is_base="1" 轮询；裸 "async" 复用 async13「通用后台对话」的配置）.
         X-Starggle-Thinking: 主 LLM 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
                              服务端按选中模型/运营商的参数规范注入思考参数；
                              异步模式不受此头影响（思考模式由总控 is_think 决定：'1'强制开/'0'强制关/NULL跟随客户端不注入，未命中总控强制关闭）.
@@ -298,12 +335,16 @@ async def chat_completions(
     llm_purpose = x_starggle_purpose or "main"
     # 任何 async* 都按异步计（含 async1..13 与未知 async99 等），
     # 防止未知 purpose 串到主模型路由使用客户端 Authorization key
-    is_async = llm_purpose == "async" or llm_purpose.startswith("async")
+    is_async = llm_purpose.startswith("async")
 
-    # ── 异步LLM总控：async1..13 命中总控表且启用且已绑定模型时走配置路由，否则回落轮询 ──
+    # ── 异步LLM总控：async* 命中总控表且启用且已绑定模型时走配置路由，否则回落轮询 ──
+    # async1..13 各查各的行；裸 "async" 及其他未知 async* 统一复用 async13「通用后台对话」的配置
     purpose_cfg = None
-    if _ASYNC_PURPOSE_RE.match(llm_purpose):
-        purpose_cfg = await async_manage_service.get_config_by_purpose(db, llm_purpose)
+    lookup_purpose = llm_purpose
+    if is_async:
+        if not _ASYNC_PURPOSE_RE.match(llm_purpose):
+            lookup_purpose = "async13"
+        purpose_cfg = await async_manage_service.get_config_by_purpose(db, lookup_purpose)
     use_config = bool(purpose_cfg and purpose_cfg.is_using == "1" and purpose_cfg.ai_model_id)
 
     # ── 会员日限额校验（携带 X-Starggle-User-Id 的用户才校验） ──
@@ -339,15 +380,16 @@ async def chat_completions(
         bound = await model_manage_service.get_model_by_id(db, purpose_cfg.ai_model_id)
         if bound is None or bound.is_using != "1":
             logger.warning(
-                "POST /call-manage/chat/completions -> purpose=%s 绑定模型 %s 不存在或停用，回落 is_base=1 轮询",
-                llm_purpose, purpose_cfg.ai_model_id,
+                "POST /call-manage/chat/completions -> purpose=%s 总控(config=%s)绑定模型 %s 不存在或停用，回落 is_base=1 轮询",
+                llm_purpose, lookup_purpose, purpose_cfg.ai_model_id,
             )
             use_config = False
         else:
             selected = bound
             logger.info(
-                "POST /call-manage/chat/completions -> purpose=%s 命中异步LLM总控: model=%r com=%s is_think=%s",
-                llm_purpose, selected.ai_model_name, selected.com_name, purpose_cfg.is_think,
+                "POST /call-manage/chat/completions -> purpose=%s 命中异步LLM总控(config=%s): "
+                "model=%r com=%s is_think=%s",
+                llm_purpose, lookup_purpose, selected.ai_model_name, selected.com_name, purpose_cfg.is_think,
             )
 
     if selected is None:
@@ -435,7 +477,7 @@ async def chat_completions(
 
     # ── 思考模式开关判定 ──
     # 异步模式：总控配置 is_think 决定 —— "1"强制开 / "0"强制关 / None跟随客户端（think_enabled 保持 None → 不注入，请求体原样透传）；
-    #           未命中总控的裸 async/回落一律强制关闭（兼容推理模型）
+    #           未命中总控的回落（含裸 async 未配 async13）一律强制关闭（兼容推理模型）
     # 主模式：由 X-Starggle-Thinking 头控制；缺头不注入，保持请求体原样
     think_enabled: Optional[bool] = None
     if is_async:
@@ -501,6 +543,9 @@ async def chat_completions(
 
     # 提供商路由参数注入（OpenRouter）：把 model_manage_info.extra_config.provider 塞进请求体顶层 provider
     _apply_provider_params(body, selected)
+
+    # Gemini 安全阈值注入：extra_body.safety_settings 全 BLOCK_NONE（仅 gemini 系模型）
+    _apply_gemini_safety(body, model_name)
 
     is_stream = body.get("stream", False)
 
