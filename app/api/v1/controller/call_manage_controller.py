@@ -637,11 +637,16 @@ async def chat_completions(
                     yield chunk
             except Exception as e:
                 elapsed = (time.perf_counter() - t0) * 1000
+                # 异常类型名必须带上：部分上游断流异常（RemoteProtocolError 等）str() 为空串，
+                # 只打 {e} 会得到 "error="（2026-09-15 error.log 实测），客户端拿到的
+                # [ERROR] 事件也成了一句没有原因的空话。
+                # 压平空白：异常消息内嵌换行会把单行 SSE 帧撕成多行杂散行
+                err_desc = " ".join(f"{type(e).__name__}: {e}".split())
                 logger.error(
                     "POST /call-manage/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
-                    model_name, elapsed, str(e),
+                    model_name, elapsed, err_desc,
                 )
-                yield f"data: [ERROR] 流式转发失败: {str(e)}\n\n".encode("utf-8")
+                yield f"data: [ERROR] 流式转发失败: {err_desc}\n\n".encode("utf-8")
             finally:
                 await _close_safely(resp)
                 await _close_safely(client)
