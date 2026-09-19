@@ -122,6 +122,8 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
       关闭即移除字段（无 ``type=disabled`` 语义）
     - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
+    - GLM（智谱直连）: ``thinking = {"type": "enabled"|"disabled"}``（与 DeepSeek 同格式；
+      GLM5.3flash 等强制思考模型缺参/disabled 会直接报错，开关必须显式落参）
     - 其余模型族（GPT/o系列、Grok 等）无可控思考参数 → 不处理，保持原样
     """
     name = (model_name or "").lower()
@@ -159,6 +161,10 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     elif "qwen" in name:
         body["enable_thinking"] = enabled
         body["chat_template_kwargs"] = {"enable_thinking": enabled}
+    elif "glm" in name or "bigmodel" in url or "zhipu" in url:
+        # GLM（智谱）：thinking.type 与 DeepSeek 同格式。GLM5.3flash 等强制思考模型
+        # 收到 disabled 或缺参都会直接报错，开关必须显式落参，不能靠模型默认值
+        body["thinking"] = {"type": "enabled" if enabled else "disabled"}
 
 
 # ── 提供商路由参数注入 ──
