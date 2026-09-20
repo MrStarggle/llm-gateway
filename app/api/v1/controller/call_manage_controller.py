@@ -256,6 +256,64 @@ async def _stream_aiter_bytes(resp: httpx.Response) -> AsyncGenerator[bytes, Non
         yield chunk
 
 
+def _ingest_sse_chunk(
+    buf: bytes,
+    accumulated_content: list[str],
+    accumulated_reasoning: list[str],
+    accumulated_usage: dict[str, int],
+    flush: bool = False,
+) -> bytes:
+    """消费 ``buf`` 里的**完整** SSE 行并累加，返回残余的半行（留给下次拼接）。
+
+    **必须按行缓冲，不能逐 chunk 独立切行**：``aiter_bytes`` 吐的是任意网络分片，
+    边界与 SSE 行边界无关——一条 ``data: {...}`` 经常被切成两块，逐 chunk
+    ``decode().split("\\n")`` 会让两个半行都不以 ``data: `` 开头，**整条 delta 被静默
+    丢弃**；流尾没有换行收尾的末行同样永远等不到处理。
+
+    2026-09-20 实测（StarggleChat `docs/1.txt`）：2485 字正文随机缺字 20+ 处
+    （「陈让」→「陈」、「三个月不敢试」→「三个月敢试」语义反转），且正文在句中断掉；
+    同一次请求的思维链同样缺字——两条流共用一个坏的解析，非模型问题。
+
+    ``flush=True`` 时把残余当完整行处理（流结束时调用，末帧常无尾随 ``\\n``）。
+    """
+    if b"\n" in buf:
+        *lines, buf = buf.split(b"\n")
+    elif not flush:
+        return buf
+    else:
+        lines, buf = [buf], b""
+    for raw in lines:
+        line = raw.decode("utf-8", errors="replace")
+        if not (line.startswith("data: ") and line[6:] != "[DONE]"):
+            continue
+        try:
+            data = json.loads(line[6:])
+            # 提取 usage（若有）：必须放在 choices 处理之前——
+            # DeepSeek 等供应商的末帧 usage 带空 choices []，若先取 choices[0] 会 IndexError，
+            # 导致 usage 提取被 except 吞掉，流式 token 记录丢失
+            usage = data.get("usage")
+            if usage and isinstance(usage, dict):
+                accumulated_usage["prompt_tokens"] = usage.get("prompt_tokens", 0)
+                accumulated_usage["completion_tokens"] = usage.get("completion_tokens", 0)
+                accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
+                accumulated_usage["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
+                accumulated_usage["prompt_cache_miss_tokens"] = usage.get("prompt_cache_miss_tokens", 0)
+            # 正文 delta：仅当 choices 非空时提取
+            choices = data.get("choices")
+            if choices:
+                delta = choices[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    accumulated_content.append(content)
+                # 思维链字段：DeepSeek 用 reasoning_content，OpenRouter 用 reasoning
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                if reasoning and isinstance(reasoning, str):
+                    accumulated_reasoning.append(reasoning)
+        except (json.JSONDecodeError, KeyError, IndexError):
+            pass
+    return buf
+
+
 # ── 共享的模型拉取逻辑（call-manage 和 model-manage 共用） ──
 
 async def _fetch_models_from_upstream(com_url: str, api_key: str) -> tuple[list[str], str]:
@@ -608,39 +666,27 @@ async def chat_completions(
                         f"{error_body.decode('utf-8', errors='replace')}\n\n"
                     ).encode("utf-8")
                     return
+                # 逐 chunk 累加日志用正文/usage——按行缓冲，细节见 _ingest_sse_chunk
+                sse_buf = b""
                 async for chunk in _stream_aiter_bytes(resp):
                     total_bytes += len(chunk)
                     accumulated_chunks.append(chunk)
-                    # 解析 SSE chunk 提取 delta.content 和 usage（部分供应商在最后一个 chunk 中附带 usage）
-                    text = chunk.decode("utf-8", errors="replace")
-                    for line in text.split("\n"):
-                        if line.startswith("data: ") and line[6:] != "[DONE]":
-                            try:
-                                data = json.loads(line[6:])
-                                # 提取 usage（若有）：必须放在 choices 处理之前——
-                                # DeepSeek 等供应商的末帧 usage 带空 choices []，若先取 choices[0] 会 IndexError，
-                                # 导致 usage 提取被 except 吞掉，流式 token 记录丢失
-                                usage = data.get("usage")
-                                if usage and isinstance(usage, dict):
-                                    accumulated_usage["prompt_tokens"] = usage.get("prompt_tokens", 0)
-                                    accumulated_usage["completion_tokens"] = usage.get("completion_tokens", 0)
-                                    accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
-                                    accumulated_usage["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
-                                    accumulated_usage["prompt_cache_miss_tokens"] = usage.get("prompt_cache_miss_tokens", 0)
-                                # 正文 delta：仅当 choices 非空时提取
-                                choices = data.get("choices")
-                                if choices:
-                                    delta = choices[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        accumulated_content.append(content)
-                                    # 思维链字段：DeepSeek 用 reasoning_content，OpenRouter 用 reasoning
-                                    reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
-                                    if reasoning and isinstance(reasoning, str):
-                                        accumulated_reasoning.append(reasoning)
-                            except (json.JSONDecodeError, KeyError, IndexError):
-                                pass
+                    sse_buf = _ingest_sse_chunk(
+                        sse_buf + chunk,
+                        accumulated_content,
+                        accumulated_reasoning,
+                        accumulated_usage,
+                    )
                     yield chunk
+                # 流结束：flush 无换行收尾的末行（末帧常无尾随 \n）
+                if sse_buf:
+                    _ingest_sse_chunk(
+                        sse_buf,
+                        accumulated_content,
+                        accumulated_reasoning,
+                        accumulated_usage,
+                        flush=True,
+                    )
             except Exception as e:
                 elapsed = (time.perf_counter() - t0) * 1000
                 # 异常类型名必须带上：部分上游断流异常（RemoteProtocolError 等）str() 为空串，
