@@ -817,14 +817,14 @@
             const q = query.toLowerCase();
             return _allCompanies.filter(c =>
                 c.name.toLowerCase().includes(q) || c.domain.toLowerCase().includes(q)
-            ).slice(0, 8);
+            );
         }
 
         function onComNameFocus() {
             const input = document.getElementById('fComName');
             const arrow = document.getElementById('suggestArrow');
             if (!input.value.trim() && _allCompanies && _allCompanies.length > 0) {
-                renderSuggestions(_allCompanies.slice(0, 8), true);
+                renderSuggestions(_allCompanies, true);
                 arrow.classList.add('open');
             } else {
                 onComNameInput();
@@ -841,7 +841,7 @@
 
             if (name.length === 0) {
                 if (_allCompanies && _allCompanies.length > 0) {
-                    renderSuggestions(_allCompanies.slice(0, 8), true);
+                    renderSuggestions(_allCompanies, true);
                     arrow.classList.add('open');
                 }
                 return;

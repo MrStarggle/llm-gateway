@@ -27,3 +27,4 @@ api.minimax.chat, MiniMax, MiniMax开放平台
 api.lingyiwanwu.com, 零一万物, Yi系列模型
 api.deepseek.com, DeepSeek, DeepSeek深度求索
 api.01.ai, 零一万物, Yi系列模型国际版
+api.ofox.io/v1, ofox, Ofox开放平台

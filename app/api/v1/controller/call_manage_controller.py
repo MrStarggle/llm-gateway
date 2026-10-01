@@ -123,7 +123,9 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
       关闭即移除字段（无 ``type=disabled`` 语义）
     - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
     - GLM（智谱直连）: ``thinking = {"type": "enabled"|"disabled"}``（与 DeepSeek 同格式；
-      GLM5.3flash 等强制思考模型缺参/disabled 会直接报错，开关必须显式落参）
+      GLM5.3flash 等强制思考模型缺参/disabled 会直接报错，开关必须显式落参）；
+      思考开启时默认注入 ``reasoning_effort = "low"``（智谱官方思考强度档位 low/high/max，
+      模型默认 max 最费 token，客户端已显式传入则保留客户端档位），关闭时移除该参数
     - 其余模型族（GPT/o系列、Grok 等）无可控思考参数 → 不处理，保持原样
     """
     name = (model_name or "").lower()
@@ -165,6 +167,13 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
         # GLM（智谱）：thinking.type 与 DeepSeek 同格式。GLM5.3flash 等强制思考模型
         # 收到 disabled 或缺参都会直接报错，开关必须显式落参，不能靠模型默认值
         body["thinking"] = {"type": "enabled" if enabled else "disabled"}
+        # 思考强度：智谱官方独立参数 reasoning_effort（low/high/max，模型默认 max），
+        # 与 thinking.type 开关分离。思考开启时默认压到 low 省 token；
+        # 客户端已显式传入则保留客户端档位；关闭时移除，避免孤儿强度参数与开关矛盾
+        if enabled:
+            body.setdefault("reasoning_effort", "low")
+        else:
+            body.pop("reasoning_effort", None)
 
 
 # ── 提供商路由参数注入 ──
