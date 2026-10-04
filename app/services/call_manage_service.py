@@ -9,11 +9,12 @@ import asyncio
 import logging
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.membership import DEFAULT_LEVEL
 from app.models.model_manage_info import ModelManageInfo
+from app.models.user_daily_quota import UserDailyQuota
 from app.models.user_token_info import UserTokenInfo
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,43 @@ async def next_model(
     return selected
 
 
+async def incr_today_call_count(db: AsyncSession, user_id: str) -> None:
+    """限额计数 +1（user_daily_quota 表，与 token 用量明细分离）.
+
+    2026-10-04 起限额口径 = 本表当日 call_count，不再数 user_token_info 行——
+    管理端重置额度只清本表，用量明细保留。非关键路径：失败仅记日志（fail-open，
+    少计一次比打断已完成的 LLM 响应更可接受）。并发下唯一键冲突按更新重试一次。
+    """
+    today = date.today()
+    try:
+        row = (await db.execute(
+            select(UserDailyQuota).where(
+                UserDailyQuota.user_id == user_id,
+                UserDailyQuota.quota_date == today,
+            )
+        )).scalar_one_or_none()
+        if row is not None:
+            row.call_count = (row.call_count or 0) + 1
+        else:
+            db.add(UserDailyQuota(user_id=user_id, quota_date=today, call_count=1))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        try:
+            result = await db.execute(
+                update(UserDailyQuota)
+                .where(UserDailyQuota.user_id == user_id,
+                       UserDailyQuota.quota_date == today)
+                .values(call_count=UserDailyQuota.call_count + 1)
+            )
+            if result.rowcount == 0:
+                db.add(UserDailyQuota(user_id=user_id, quota_date=today, call_count=1))
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error("限额计数失败（fail-open 放行）: user_id=%s error=%s", user_id, e)
+
+
 async def record_token_usage(
     db: AsyncSession,
     user_id: str,
@@ -91,12 +129,17 @@ async def record_token_usage(
     is_stream: bool,
     usage: dict,
 ) -> None:
-    """记录一次 LLM 调用的 token 消耗（每次调用一行明细）.
+    """记录一次 LLM 调用：限额计数 +1（user_daily_quota）与 token 明细一行（user_token_info）.
 
-    非关键路径：失败仅记录日志，绝不影响 LLM 响应的返回.
-    无 user_id 或无 usage 时直接跳过.
+    2026-10-04 拆分：两表职责分离——计数是限额判定源（重置只清计数），明细是统计。
+    非关键路径：任一失败仅记录日志，绝不影响 LLM 响应的返回.
+    只要调用发生（user_id 存在）计数即 +1；明细仍要求 usage 非空.
     """
-    if not user_id or not usage:
+    if not user_id:
+        return
+    await incr_today_call_count(db, user_id)
+
+    if not usage:
         return
     record = UserTokenInfo(
         user_id=user_id[:64],
@@ -148,21 +191,16 @@ async def get_effective_membership(
 
 
 async def get_today_call_count(db: AsyncSession, user_id: str) -> int:
-    """查询用户今日已调用的 LLM 次数（按 user_token_info 明细行数统计）.
+    """查询用户今日 LLM 调用次数（限额口径，读 user_daily_quota 计数表）.
 
-    Args:
-        db: 数据库会话.
-        user_id: 用户ID.
-
-    Returns:
-        今日调用次数，无记录返回 0.
+    2026-10-04 起与 token 用量明细（user_token_info）分离：重置额度只清计数表，
+    明细保留供统计。无记录返回 0.
     """
     stmt = (
-        select(func.count())
-        .select_from(UserTokenInfo)
+        select(UserDailyQuota.call_count)
         .where(
-            UserTokenInfo.user_id == user_id,
-            UserTokenInfo.record_date == date.today(),
+            UserDailyQuota.user_id == user_id,
+            UserDailyQuota.quota_date == date.today(),
         )
     )
     result = await db.execute(stmt)

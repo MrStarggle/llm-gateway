@@ -424,15 +424,20 @@
                     <td class="muted">${esc(u.createdAt || '')}</td>
                     <td class="actions">
                         <button class="btn btn-success btn-sm recharge-btn" data-user-id="${esc(u.userId)}" data-info="${esc(`${u.userName || ''} ${u.email || ''}`.trim())}">充值积分</button>
+                        <button class="btn btn-outline btn-sm reset-btn" data-user-id="${esc(u.userId)}" data-name="${esc(u.userName || '')}"
+                                title="重置今日调用次数（只清限额计数，用量明细保留）">重置</button>
                     </td>
                 </tr>
             `).join('');
         }
         document.getElementById('userPageInfo').textContent = `第 ${_pages.users} 页 · 共 ${total} 条`;
 
-        // 事件委托绑定充值按钮（避免内联 onclick 拼接用户数据造成 XSS）
+        // 事件委托绑定充值/重置按钮（避免内联 onclick 拼接用户数据造成 XSS）
         document.querySelectorAll('#userBody .recharge-btn').forEach(btn => {
             btn.addEventListener('click', () => openRecharge(btn.dataset.userId, btn.dataset.info));
+        });
+        document.querySelectorAll('#userBody .reset-btn').forEach(btn => {
+            btn.addEventListener('click', () => resetCallCount(btn.dataset.userId, btn.dataset.name));
         });
     }
 
@@ -475,6 +480,24 @@
             }
         } catch (e) {
             toast('操作失败，请检查登录状态', false);
+        }
+    }
+
+    // ========== 重置今日调用次数（2026-10-04）==========
+    // 只清 user_daily_quota 当日限额计数（额度立即归零），user_token_info 用量明细保留
+    async function resetCallCount(userId, name) {
+        const label = name ? `「${name}」` : '';
+        if (!confirm(`确认重置 ${label} 今日调用次数？\n只清限额计数（额度立即归零），token 用量明细保留。`)) return;
+        try {
+            const result = await api('POST', '/reset-call-count', { user_id: userId });
+            if (result.code === 200) {
+                toast(`已重置（清除 ${result.data.deletedRows} 条计数），今日用量归零`);
+                loadUsers();
+            } else {
+                toast(result.message || '重置失败', false);
+            }
+        } catch (e) {
+            toast('重置失败，请检查登录状态', false);
         }
     }
 

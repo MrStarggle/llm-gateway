@@ -42,6 +42,59 @@ _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
 # ── Claude 思考模式默认预算（_apply_thinking_params 注入与预算收敛共用）──
 _CLAUDE_THINKING_BUDGET = 10000
 
+# ── 智谱 GLM 版本门槛（模型名形如 glm-<major>.<minor>[-变体]，如 glm-5.3-flash / z-ai/glm-4.6）──
+# 官方文档（docs.bigmodel.cn「深度思考」）：
+#   · reasoning_effort 仅 GLM-5.2 及以上支持，低版本传了报错（GLM-4.6 及以下无强度档）；
+#   · GLM-5.3 / 5.3-FLASH / 5.3-FLASHX 起**不再支持 thinking.type=disabled**
+#     （传了返回 HTTP 400，错误码 1210「该模型始终思考，不支持关闭思考；请使用 low、high 或 max」）。
+_GLM_NAME_RE = re.compile(r"glm[-_ ]?(\d+)(?:\.(\d+))?", re.IGNORECASE)
+_GLM_EFFORT_MIN_VER = (5, 2)
+_GLM_FORCED_THINKING_MIN_VER = (5, 3)
+_GLM_THINKING_EFFORT = "low"      # GLM-5.2+ 的思考强度档；厂商默认 max 最贵最慢
+
+
+def _glm_version(model_name: str) -> Optional[tuple]:
+    """从模型名解析 GLM 版本号 → (major, minor)；解析不出返回 None（按最低能力处理）。
+
+    旧世代命名（chatglm-130b / glm-130b 之类）会解析出三位数版本号，越界即按「解析不出」
+    处理——避免把 reasoning_effort 一类新参数发给不认识它的老模型。
+    """
+    m = _GLM_NAME_RE.search(model_name or "")
+    if not m:
+        return None
+    major, minor = int(m.group(1)), int(m.group(2) or 0)
+    if major > 9 or minor > 9:
+        return None
+    return major, minor
+
+
+def _glm_forced_thinking(model_name: str) -> bool:
+    """所选模型是否为「强制思考、不可关闭」的 GLM（5.3 / 5.3-flash / 5.3-flashx 族）。
+
+    这类型号关不掉：官方对 disabled 返 400，聚合网关则静默忽略并让模型按默认 max 跑。
+    与运营商地址无关（智谱直连与 OpenRouter 都一样关不掉），故只按模型名判定。
+    """
+    ver = _glm_version(model_name)
+    return ver is not None and ver >= _GLM_FORCED_THINKING_MIN_VER
+
+
+def _glm_thinking_plan(model_name: str, enabled: bool) -> Optional[tuple]:
+    """GLM 的思考决策 → (是否思考, 强度|None)；非 GLM 返回 None。
+
+    两种出站格式共用同一套档位判断，各分支只负责把结果拼成自己的字段形态：
+      · 智谱直连/聚合（非 OpenRouter url）：``thinking={type}`` + 顶层 ``reasoning_effort``
+      · OpenRouter：嵌套 ``reasoning={enabled, effort}``
+    与客户端 CallModelStreamService._glm_thinking_plan 同口径（两仓共用契约，改动须同步）。
+    """
+    if "glm" not in (model_name or "").lower():
+        return None                    # 非 GLM：不属于本规则的适用范围
+    ver = _glm_version(model_name)
+    effort = _GLM_THINKING_EFFORT if (ver is not None and ver >= _GLM_EFFORT_MIN_VER) else None
+    if ver is not None and ver >= _GLM_FORCED_THINKING_MIN_VER:
+        return True, effort            # 强制思考型号：关不掉，只能压强度
+    return enabled, (effort if enabled else None)
+
+
 # ── SSRF 防护：禁止的目标地址 ──
 _BLOCKED_HOSTS = frozenset({
     "127.0.0.1", "localhost", "0.0.0.0",
@@ -115,29 +168,46 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
     - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值统一控制（``{"enabled": true|false}``），
       开启时额外注入 ``reasoning.effort = "low"``；
-      所有经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判；
+      经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判（GLM 除外，见下）；
       非推理模型传该参数会被网关忽略，同时清理旧格式 ``extra_body.thinking`` 避免冲突
     - DeepSeek 直连 / MiMo 官方 API（api.xiaomimimo.com）: ``thinking = {"type": "enabled"|"disabled"}``；
       其中 DeepSeek 开启时额外注入 ``reasoning_effort = "low"``（参考 doc/temp.txt）
     - Claude: 开启用 ``thinking = {"type": "enabled", "budget_tokens": N}``；
       关闭即移除字段（无 ``type=disabled`` 语义）
     - Qwen: ``enable_thinking`` + ``chat_template_kwargs.enable_thinking``
-    - GLM（智谱直连）: ``thinking = {"type": "enabled"|"disabled"}``（与 DeepSeek 同格式；
-      GLM5.3flash 等强制思考模型缺参/disabled 会直接报错，开关必须显式落参）；
+    - GLM（智谱直连）: ``thinking = {"type": "enabled"|"disabled"}``（与 DeepSeek 同格式）；
       思考开启时默认注入 ``reasoning_effort = "low"``（智谱官方思考强度档位 low/high/max，
-      模型默认 max 最费 token，客户端已显式传入则保留客户端档位），关闭时移除该参数
+      模型默认 max 最费 token，客户端已显式传入则保留客户端档位），关闭时移除该参数。
+      **但 GLM-5.3/flash/flashx 是强制思考型号**：模型层面不允许关闭，传 ``disabled`` 官方返 400、
+      聚合网关则静默忽略（模型仍按默认 max 思考）。故这类型号恒发 ``enabled`` + 压到 low，
+      把「关」降级为「开着但最低档」；``reasoning_effort`` 仅 GLM-5.2+ 支持，低版本不发
     - 其余模型族（GPT/o系列、Grok 等）无可控思考参数 → 不处理，保持原样
     """
     name = (model_name or "").lower()
     url = (com_url or "").lower()
 
     if "openrouter" in url:
-        # OpenRouter 是统一网关：所有经它的推理模型都用官方 reasoning.enabled 布尔值控制，
+        # OpenRouter 是统一网关：推理模型都用官方 reasoning.enabled 布尔值控制，
         # 不按模型名逐个特判；非推理模型传该参数会被网关忽略，无副作用。
-        body["reasoning"] = {"enabled": enabled}
-        # 思考模式开启时控制思考深度（OpenRouter 官方 reasoning.effort 格式）
-        if enabled:
-            body["reasoning"]["effort"] = "low"
+        # **但 GLM 例外**：它有强制思考型号（关不掉，发 enabled=false 会被静默忽略并让模型
+        # 按默认 max 跑）与独立强度档，故先过一遍 _glm_thinking_plan——否则同一个静默 max
+        # 故障只是从智谱直连搬到了 OpenRouter 路由上（2026-10-02 两仓同修的教训）。
+        prev_reasoning = body.get("reasoning") if isinstance(body.get("reasoning"), dict) else {}
+        prev_effort = prev_reasoning.get("effort")
+        glm_plan = _glm_thinking_plan(name, enabled)
+        if glm_plan is None:
+            body["reasoning"] = {"enabled": enabled}
+            # 思考模式开启时控制思考深度（OpenRouter 官方 reasoning.effort 格式）
+            if enabled:
+                body["reasoning"]["effort"] = _GLM_THINKING_EFFORT
+        else:
+            think_on, effort = glm_plan
+            body["reasoning"] = {"enabled": think_on}
+            if effort:
+                # 强制降级（客户端要关、型号关不掉）时不用客户端带来的档位——那多半是残留，
+                # 顺着用会出现「客户端以为关了、实际按 high/max 烧」的最坏组合；其余保留其档位
+                clamped = think_on and not enabled
+                body["reasoning"]["effort"] = _GLM_THINKING_EFFORT if clamped else (prev_effort or effort)
         # 清理旧格式 extra_body.thinking，避免与官方 reasoning 参数冲突
         extra_body = body.get("extra_body")
         if isinstance(extra_body, dict):
@@ -164,15 +234,27 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
         body["enable_thinking"] = enabled
         body["chat_template_kwargs"] = {"enable_thinking": enabled}
     elif "glm" in name or "bigmodel" in url or "zhipu" in url:
-        # GLM（智谱）：thinking.type 与 DeepSeek 同格式。GLM5.3flash 等强制思考模型
-        # 收到 disabled 或缺参都会直接报错，开关必须显式落参，不能靠模型默认值
-        body["thinking"] = {"type": "enabled" if enabled else "disabled"}
-        # 思考强度：智谱官方独立参数 reasoning_effort（low/high/max，模型默认 max），
-        # 与 thinking.type 开关分离。思考开启时默认压到 low 省 token；
-        # 客户端已显式传入则保留客户端档位；关闭时移除，避免孤儿强度参数与开关矛盾
-        if enabled:
-            body.setdefault("reasoning_effort", "low")
+        # GLM（智谱）：thinking.type 与 DeepSeek 同格式。但 GLM-5.3 / 5.3-flash / 5.3-flashx
+        # 是**强制思考**型号——模型层面不允许关闭（官方：传 disabled 返回 400，错误码 1210
+        # 「该模型始终思考，请使用 low、high 或 max」）。实测经聚合网关（ofox 等）时 disabled
+        # 会被静默**忽略**：请求通（200），但模型按**默认 max** 强度一路思考——客户端以为自己
+        # 关掉了，实际拿到最贵最慢那一档，且报文里没有任何强度参数可查。
+        # 故对强制思考型号恒发 enabled，把「关」降级为「开着但压到最低档」，而不是发一个无效的 disabled。
+        glm_ver = _glm_version(name)
+        forced_thinking = _glm_forced_thinking(name)
+        if enabled or forced_thinking:
+            body["thinking"] = {"type": "enabled"}
+            # 思考强度：智谱官方独立参数 reasoning_effort（low/high/max，模型默认 max），
+            # 与 thinking.type 开关分离。默认压到 low 省 token；客户端已显式传入则保留其档位。
+            # 仅 GLM-5.2+ 认该参数（低版本传了报错），故按版本门禁。
+            if glm_ver is not None and glm_ver >= _GLM_EFFORT_MIN_VER:
+                if forced_thinking and not enabled:
+                    # 强制降级（客户端要关、型号关不掉）：不用客户端带来的档位，最低档处理
+                    body["reasoning_effort"] = _GLM_THINKING_EFFORT
+                else:
+                    body.setdefault("reasoning_effort", _GLM_THINKING_EFFORT)
         else:
+            body["thinking"] = {"type": "disabled"}
             body.pop("reasoning_effort", None)
 
 
@@ -590,29 +672,38 @@ async def chat_completions(
         )
 
     # ── 思考参数注入：按选中模型/运营商的参数规范构造 ──
+    # 例外：强制思考型号（GLM-5.3 族）即使「未表达偏好」也要注入。它们关不掉，不注入就是
+    # 厂商默认 max（最贵最慢那一档）——异步链 is_think=NULL（跟随客户端）而客户端又不发
+    # X-Starggle-Thinking 头时正是这条路。按「关闭请求」交给 _apply_thinking_params 降级为
+    # enabled + 最低档；其余模型维持「缺头不注入、请求体原样透传」的既有契约。
     if think_enabled is not None:
         _apply_thinking_params(body, model_name, selected.com_url, think_enabled)
-        # Claude 思考模式：budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
-        # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
-        # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
-        if think_enabled and "claude" in model_name.lower():
-            thinking = body.get("thinking")
-            if isinstance(thinking, dict) and thinking.get("type") == "enabled":
-                max_tokens = body.get("max_tokens")
-                if isinstance(max_tokens, int) and max_tokens <= _CLAUDE_THINKING_BUDGET:
-                    budget = max_tokens - 1024
-                    if budget >= 1024:
-                        thinking["budget_tokens"] = budget
-                        logger.info(
-                            "POST /call-manage/chat/completions -> Claude 思考 budget 收敛为 %d（max_tokens=%s）",
-                            budget, max_tokens,
-                        )
-                    else:
-                        thinking["type"] = "disabled"
-                        logger.warning(
-                            "POST /call-manage/chat/completions -> max_tokens=%s 不足以容纳 Claude 思考最低预算(1024)，已关闭思考",
-                            max_tokens,
-                        )
+    elif _glm_forced_thinking(model_name):
+        _apply_thinking_params(body, model_name, selected.com_url, False)
+
+    # ── Claude 思考模式预算收敛 ──
+    # budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
+    # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
+    # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
+    # 注意：本块必须与上面的 if/elif **同级**，不能被塞进某个分支体——它自身已有按需 guard。
+    if think_enabled and "claude" in model_name.lower():
+        thinking = body.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+            max_tokens = body.get("max_tokens")
+            if isinstance(max_tokens, int) and max_tokens <= _CLAUDE_THINKING_BUDGET:
+                budget = max_tokens - 1024
+                if budget >= 1024:
+                    thinking["budget_tokens"] = budget
+                    logger.info(
+                        "POST /call-manage/chat/completions -> Claude 思考 budget 收敛为 %d（max_tokens=%s）",
+                        budget, max_tokens,
+                    )
+                else:
+                    thinking["type"] = "disabled"
+                    logger.warning(
+                        "POST /call-manage/chat/completions -> max_tokens=%s 不足以容纳 Claude 思考最低预算(1024)，已关闭思考",
+                        max_tokens,
+                    )
 
     # 提供商路由参数注入（OpenRouter）：把 model_manage_info.extra_config.provider 塞进请求体顶层 provider
     _apply_provider_params(body, selected)

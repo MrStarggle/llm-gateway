@@ -2,13 +2,13 @@
 import logging
 from datetime import date
 
-from sqlalchemy import desc, func, or_, select, update
+from sqlalchemy import delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.membership import tier_of_balance
 from app.models.user_info import UserInfo
 from app.models.order_info import OrderInfo
-from app.models.user_token_info import UserTokenInfo
+from app.models.user_daily_quota import UserDailyQuota
 from app.utils.SnowflakeIDGenerator import get_snowflake_id
 
 logger = logging.getLogger(__name__)
@@ -51,18 +51,44 @@ async def list_users(
 
 
 async def get_today_usage_map(db: AsyncSession, user_ids: list[str]) -> dict[str, int]:
-    """批量查询多个用户今日 LLM 调用次数（一次 SQL 聚合）"""
+    """批量查询多个用户今日 LLM 调用次数（限额口径，读 user_daily_quota 计数表）.
+
+    2026-10-04 起与 token 用量明细（user_token_info）分离：本函数供限额展示与
+    重置回读，来源=计数表；明细统计走 token 表.
+    """
     if not user_ids:
         return {}
     rows = await db.execute(
-        select(UserTokenInfo.user_id, func.count())
+        select(UserDailyQuota.user_id, UserDailyQuota.call_count)
         .where(
-            UserTokenInfo.record_date == date.today(),
-            UserTokenInfo.user_id.in_(user_ids),
+            UserDailyQuota.quota_date == date.today(),
+            UserDailyQuota.user_id.in_(user_ids),
         )
-        .group_by(UserTokenInfo.user_id)
     )
-    return {uid: int(cnt) for uid, cnt in rows.all()}
+    return {uid: int(cnt or 0) for uid, cnt in rows.all()}
+
+
+async def reset_today_call_count(db: AsyncSession, user_id: str) -> int | None:
+    """管理员手动重置用户今日 LLM 调用次数：只清 user_daily_quota 当日计数行.
+
+    2026-10-04 起限额与用量明细分离：重置只删计数表当日行（额度归零），
+    user_token_info 的 token 用量明细**完整保留**，统计不受影响。
+    返回删除行数；用户不存在返回 None（调用方转 400）。
+    """
+    user = await _get_user(db, user_id)
+    if not user:
+        return None
+    result = await db.execute(
+        delete(UserDailyQuota).where(
+            UserDailyQuota.user_id == user_id,
+            UserDailyQuota.quota_date == date.today(),
+        )
+    )
+    await db.commit()
+    deleted = int(result.rowcount or 0)
+    logger.info("重置今日调用次数（仅计数表，明细保留）: user_id=%s deleted=%d",
+                user_id, deleted)
+    return deleted
 
 
 async def grant_points(

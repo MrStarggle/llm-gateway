@@ -2,6 +2,7 @@
 
 - GET /user-manage/list            用户列表（含积分余额、等级、今日用量）
 - POST /user-manage/recharge-points 手动充值/扣减积分
+- POST /user-manage/reset-call-count 手动重置用户今日 LLM 调用次数
 - GET /user-manage/orders          订单列表
 """
 import logging
@@ -25,6 +26,12 @@ class RechargePointsBody(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64, description="用户ID")
     points: int = Field(..., ge=-10_000_000, le=10_000_000, description="积分变动量（正充负扣）")
     remark: str | None = Field(default=None, max_length=255, description="备注")
+
+
+class ResetCallCountBody(BaseModel):
+    """重置今日调用次数请求体"""
+    user_id: str = Field(..., min_length=1, max_length=64, description="用户ID")
+    remark: str | None = Field(default=None, max_length=255, description="备注（仅日志留痕）")
 
 
 def _user_row(user, today_usage: int) -> dict:
@@ -82,6 +89,27 @@ async def recharge_points(
         "points": body.points,
         "pointBalance": int(user.point_balance or 0),
     }, message="充值成功" if body.points > 0 else "扣减成功")
+
+
+@router.post("/reset-call-count")
+async def reset_call_count(
+    body: ResetCallCountBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员手动重置用户今日 LLM 调用次数（清 user_daily_quota 当日计数行，限额即归零）.
+
+    2026-10-04 起限额与用量明细分离：重置只清计数表，user_token_info 的
+    token 用量明细完整保留，统计不受影响.
+    """
+    deleted = await user_manage_service.reset_today_call_count(db, body.user_id)
+    if deleted is None:
+        return ResponseFactory.bad_request(message="用户不存在")
+    usage = await user_manage_service.get_today_usage_map(db, [body.user_id])
+    return ResponseFactory.ok(data={
+        "userId": body.user_id,
+        "deletedRows": deleted,
+        "todayUsed": usage.get(body.user_id, 0),
+    }, message="已重置今日调用次数")
 
 
 @router.get("/orders")
