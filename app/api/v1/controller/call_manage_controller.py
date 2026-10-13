@@ -22,7 +22,7 @@ from app.config.database import get_db
 from app.config.membership import get_tier
 from app.services import call_manage_service, async_manage_service, model_manage_service
 from app.utils.response import ResponseFactory
-from propmt import (core_propmt_one, core_propmt_two, role_core_propmt, core_list, core_propmt_deepseek,
+from propmt import (core_propmt_one, core_propmt_two, core_list, core_propmt_deepseek,
                     user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt, user_active_propmt,
                     user_sec_propmt, ai_sec_propmt)
 
@@ -151,7 +151,7 @@ def _replace_core_prompts(obj: Any) -> Any:
         obj = obj.replace("<ai_sec_propmt>", ai_sec_propmt())  # AI会话层顶部第二条指令
         obj = obj.replace("<core_propmt_deepseek>", core_propmt_deepseek())#todo 如果是deepseek系列模型
         #obj = obj.replace("<core_propmt_deepseek>", "")#todo 如果不是deepseek系列模型；暂时不动这个
-        obj = obj.replace("<role_core_propmt>", role_core_propmt())
+        #obj = obj.replace("<role_core_propmt>", role_core_propmt())#暂时注释，角色发言不需要了
         obj = obj.replace("</role_core_propmt>", "")
         return obj
     if isinstance(obj, dict):
@@ -202,12 +202,18 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
                 body["reasoning"]["effort"] = _GLM_THINKING_EFFORT
         else:
             think_on, effort = glm_plan
-            body["reasoning"] = {"enabled": think_on}
             if effort:
+                # GLM 5.2+ 有强度档：**只发 effort 不带 enabled**——OpenRouter 官方推荐用
+                # effort/max_tokens 控制思考，enabled 仅少数 provider 支持；2026-10-13 线上
+                # enabled+low 仍被按默认 max 思考烧穿 max_tokens（docs/2.txt），优先怀疑
+                # enabled 走了不支持路径。强制思考型号默认即思考，无 enabled 兜底需求。
                 # 强制降级（客户端要关、型号关不掉）时不用客户端带来的档位——那多半是残留，
                 # 顺着用会出现「客户端以为关了、实际按 high/max 烧」的最坏组合；其余保留其档位
                 clamped = think_on and not enabled
-                body["reasoning"]["effort"] = _GLM_THINKING_EFFORT if clamped else (prev_effort or effort)
+                body["reasoning"] = {"effort": _GLM_THINKING_EFFORT if clamped else (prev_effort or effort)}
+            else:
+                # 无强度档的老 GLM（5.2-）：关得掉，enabled 布尔是唯一开关，保持
+                body["reasoning"] = {"enabled": think_on}
         # 清理旧格式 extra_body.thinking，避免与官方 reasoning 参数冲突
         extra_body = body.get("extra_body")
         if isinstance(extra_body, dict):
