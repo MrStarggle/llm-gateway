@@ -42,6 +42,16 @@ _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
 # ── Claude 思考模式默认预算（_apply_thinking_params 注入与预算收敛共用）──
 _CLAUDE_THINKING_BUDGET = 10000
 
+# ── Anthropic 原生 /v1/messages 协议（ofox 等兼容网关，样例见 test.txt）──
+_ANTHROPIC_VERSION = "2023-06-01"       # 请求头 anthropic-version 固定值（协议要求）
+_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192    # 原生协议 max_tokens 必填：总控/客户端均未配置时的兜底
+
+# 原生 SSE 事件族：命中即走 _ingest_anthropic_sse_data。分流必须先于通用 usage 提取——
+# message_delta 的顶层 usage 只带 output_tokens，落进通用提取会把 prompt_tokens 覆写为 0，
+# 冲掉 message_start 已记下的 input_tokens。未列出的（ping/content_block_start 等）
+# 落回 OpenAI 通用路径亦为无害 no-op
+_ANTHROPIC_SSE_EVENT_TYPES = frozenset({"message_start", "content_block_delta", "message_delta", "error"})
+
 # ── 智谱 GLM 版本门槛（模型名形如 glm-<major>.<minor>[-变体]，如 glm-5.3-flash / z-ai/glm-4.6）──
 # 官方文档（docs.bigmodel.cn「深度思考」）：
 #   · reasoning_effort 仅 GLM-5.2 及以上支持，低版本传了报错（GLM-4.6 及以下无强度档）；
@@ -52,14 +62,23 @@ _GLM_EFFORT_MIN_VER = (5, 2)
 _GLM_FORCED_THINKING_MIN_VER = (5, 3)
 _GLM_THINKING_EFFORT = "low"      # GLM-5.2+ 的思考强度档；厂商默认 max 最贵最慢
 
+# ── MiniMax 强制思考门槛（模型名形如 minimax-m3.1 / MiniMax-M3.1）──
+# M3.1 起与 GLM-5.3 族同款「强制思考、不可关闭」，且支持 reasoning_effort 强度档，
+# 参数格式与智谱 GLM 完全一致（thinking.type + reasoning_effort），整体复用下方 GLM 判定链路。
+# 注意：M 系版本号数字小（3.1 < 5.2），门槛不能拿 GLM 的常量来比，须按家族取（见 _thinking_gates）。
+_MINIMAX_NAME_RE = re.compile(r"minimax[-_ ]?m?(\d+)(?:\.(\d+))?", re.IGNORECASE)
+_MINIMAX_EFFORT_MIN_VER = (3, 1)
+_MINIMAX_FORCED_THINKING_MIN_VER = (3, 1)
+
 
 def _glm_version(model_name: str) -> Optional[tuple]:
-    """从模型名解析 GLM 版本号 → (major, minor)；解析不出返回 None（按最低能力处理）。
+    """从模型名解析 GLM/MiniMax 版本号 → (major, minor)；解析不出返回 None（按最低能力处理）。
 
     旧世代命名（chatglm-130b / glm-130b 之类）会解析出三位数版本号，越界即按「解析不出」
     处理——避免把 reasoning_effort 一类新参数发给不认识它的老模型。
     """
-    m = _GLM_NAME_RE.search(model_name or "")
+    text = model_name or ""
+    m = _GLM_NAME_RE.search(text) or _MINIMAX_NAME_RE.search(text)
     if not m:
         return None
     major, minor = int(m.group(1)), int(m.group(2) or 0)
@@ -68,29 +87,49 @@ def _glm_version(model_name: str) -> Optional[tuple]:
     return major, minor
 
 
+def _is_minimax(model_name: str) -> bool:
+    """模型名是否属于 MiniMax 家族（与 GLM 共用思考判定链路，见 _glm_thinking_plan）。"""
+    return "minimax" in (model_name or "").lower()
+
+
+def _thinking_gates(model_name: str) -> tuple:
+    """当前模型的（effort 支持门槛 / 强制思考门槛），按家族取常量。
+
+    MiniMax 的 M3.1 版本数字上小于 GLM 的 5.2/5.3，但能力对齐——不能拿 GLM 的门槛去比。
+    """
+    if _is_minimax(model_name):
+        return _MINIMAX_EFFORT_MIN_VER, _MINIMAX_FORCED_THINKING_MIN_VER
+    return _GLM_EFFORT_MIN_VER, _GLM_FORCED_THINKING_MIN_VER
+
+
 def _glm_forced_thinking(model_name: str) -> bool:
-    """所选模型是否为「强制思考、不可关闭」的 GLM（5.3 / 5.3-flash / 5.3-flashx 族）。
+    """所选模型是否为「强制思考、不可关闭」型号（GLM-5.3 族 / MiniMax-M3.1+）。
 
     这类型号关不掉：官方对 disabled 返 400，聚合网关则静默忽略并让模型按默认 max 跑。
     与运营商地址无关（智谱直连与 OpenRouter 都一样关不掉），故只按模型名判定。
     """
     ver = _glm_version(model_name)
-    return ver is not None and ver >= _GLM_FORCED_THINKING_MIN_VER
+    if ver is None:
+        return False
+    forced_min = _thinking_gates(model_name)[1]
+    return ver >= forced_min
 
 
 def _glm_thinking_plan(model_name: str, enabled: bool) -> Optional[tuple]:
-    """GLM 的思考决策 → (是否思考, 强度|None)；非 GLM 返回 None。
+    """GLM/MiniMax 的思考决策 → (是否思考, 强度|None)；其他模型返回 None。
 
     两种出站格式共用同一套档位判断，各分支只负责把结果拼成自己的字段形态：
       · 智谱直连/聚合（非 OpenRouter url）：``thinking={type}`` + 顶层 ``reasoning_effort``
       · OpenRouter：嵌套 ``reasoning={enabled, effort}``
-    与客户端 CallModelStreamService._glm_thinking_plan 同口径（两仓共用契约，改动须同步）。
+    与客户端 CallModelStreamService._glm_thinking_plan 同口径（两仓共用契约，改动须同步，客户端仓需同步加 MiniMax-M3.1 判定）。
     """
-    if "glm" not in (model_name or "").lower():
-        return None                    # 非 GLM：不属于本规则的适用范围
+    text = (model_name or "").lower()
+    if "glm" not in text and "minimax" not in text:
+        return None                    # 非 GLM/MiniMax：不属于本规则的适用范围
     ver = _glm_version(model_name)
-    effort = _GLM_THINKING_EFFORT if (ver is not None and ver >= _GLM_EFFORT_MIN_VER) else None
-    if ver is not None and ver >= _GLM_FORCED_THINKING_MIN_VER:
+    effort_min, forced_min = _thinking_gates(model_name)
+    effort = _GLM_THINKING_EFFORT if (ver is not None and ver >= effort_min) else None
+    if ver is not None and ver >= forced_min:
         return True, effort            # 强制思考型号：关不掉，只能压强度
     return enabled, (effort if enabled else None)
 
@@ -135,6 +174,60 @@ def _validate_url(url: str) -> str:
     return url
 
 
+def _is_anthropic_native_url(url: str) -> bool:
+    """转发目标是否为 Anthropic 原生 ``/v1/messages`` 端点（ofox 等兼容网关）.
+
+    原生协议（doc/test.txt）与 OpenAI ``/chat/completions`` 的差异，由调用方分别处理：
+      · 认证头用 ``x-api-key``（非 Bearer），且必须带 ``anthropic-version``
+      · ``max_tokens`` 必填，缺了上游直接 400
+      · SSE 事件为 message_start / content_block_delta / message_delta 一族（见 _ingest_anthropic_sse_data）
+
+    仅按 URL 路径判定：DB 须存完整端点 ``…/v1/messages`` 或基址 ``…/anthropic``
+    （构造转发 URL 时补 ``/v1/messages``）；裸域名（如 https://api.anthropic.com）不会命中。
+    """
+    path = urlparse(url).path.rstrip("/").lower()
+    return path.endswith("/messages")
+
+
+def _apply_anthropic_native_body(body: dict) -> None:
+    """Anthropic 原生协议的请求体适配（ofox /v1/messages 等原生端点）.
+
+    OpenAI 格式允许 ``role: "system"`` 混在 messages 里（本平台客户端即按此发送），
+    原生协议没有这个角色——system 必须提为顶层 ``system`` 字段，留在 messages 里
+    上游直接 400。其余字段（model/max_tokens/stream/thinking/temperature）两协议
+    同名同义，原样透传。
+    """
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return
+    system_parts: list[str] = []
+    kept: list[Any] = []
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str):
+                system_parts.append(content)
+            elif isinstance(content, list):
+                # content blocks 形态：只拼其中的 text 块
+                system_parts.append("".join(
+                    blk.get("text", "") for blk in content if isinstance(blk, dict)
+                ))
+            continue
+        kept.append(msg)
+    if not system_parts:
+        return
+    body["messages"] = kept
+    hoisted = "\n".join(p for p in system_parts if p)
+    prev = body.get("system")
+    if isinstance(prev, str) and prev:
+        hoisted = f"{prev}\n{hoisted}"
+    body["system"] = hoisted
+    logger.info(
+        "POST /call-manage/chat/completions -> Anthropic 原生适配: %d 条 system 消息提为顶层 system 字段",
+        len(system_parts),
+    )
+
+
 # ── systemPropmt 占位符替换 ──
 def _replace_core_prompts(obj: Any) -> Any:
     """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
@@ -168,7 +261,7 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     与客户端 CallModelStreamService 的厂商分支保持一致的参数格式：
     - OpenRouter 网关: 用官方 ``reasoning.enabled`` 布尔值统一控制（``{"enabled": true|false}``），
       开启时额外注入 ``reasoning.effort = "low"``；
-      经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判（GLM 除外，见下）；
+      经 OpenRouter 的推理模型共用这一格式，不按模型名逐个特判（GLM/MiniMax 除外，见下）；
       非推理模型传该参数会被网关忽略，同时清理旧格式 ``extra_body.thinking`` 避免冲突
     - DeepSeek 直连 / MiMo 官方 API（api.xiaomimimo.com）: ``thinking = {"type": "enabled"|"disabled"}``；
       其中 DeepSeek 开启时额外注入 ``reasoning_effort = "low"``（参考 doc/temp.txt）
@@ -181,6 +274,8 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
       **但 GLM-5.3/flash/flashx 是强制思考型号**：模型层面不允许关闭，传 ``disabled`` 官方返 400、
       聚合网关则静默忽略（模型仍按默认 max 思考）。故这类型号恒发 ``enabled`` + 压到 low，
       把「关」降级为「开着但最低档」；``reasoning_effort`` 仅 GLM-5.2+ 支持，低版本不发
+      **MiniMax-M3.1+ 同属强制思考型号**，参数格式与 GLM 一致，走同一分支
+      （判定复用 _glm_thinking_plan / _glm_forced_thinking，仅版本门槛数值不同）
     - 其余模型族（GPT/o系列、Grok 等）无可控思考参数 → 不处理，保持原样
     """
     name = (model_name or "").lower()
@@ -189,7 +284,7 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     if "openrouter" in url:
         # OpenRouter 是统一网关：推理模型都用官方 reasoning.enabled 布尔值控制，
         # 不按模型名逐个特判；非推理模型传该参数会被网关忽略，无副作用。
-        # **但 GLM 例外**：它有强制思考型号（关不掉，发 enabled=false 会被静默忽略并让模型
+        # **但 GLM/MiniMax 例外**：它有强制思考型号（关不掉，发 enabled=false 会被静默忽略并让模型
         # 按默认 max 跑）与独立强度档，故先过一遍 _glm_thinking_plan——否则同一个静默 max
         # 故障只是从智谱直连搬到了 OpenRouter 路由上（2026-10-02 两仓同修的教训）。
         prev_reasoning = body.get("reasoning") if isinstance(body.get("reasoning"), dict) else {}
@@ -234,26 +329,32 @@ def _apply_thinking_params(body: dict, model_name: str, com_url: str, enabled: b
     elif "claude" in name:
         if enabled:
             body["thinking"] = {"type": "enabled", "budget_tokens": _CLAUDE_THINKING_BUDGET}
+            # Anthropic 硬约束：思考开启时 temperature 必须为 1，top_p/top_k 不可携带，
+            # 违反即上游 400（ofox 等原生网关同约束）。客户端带来的值一律压掉。
+            body["temperature"] = 1
+            body.pop("top_p", None)
+            body.pop("top_k", None)
         else:
             body.pop("thinking", None)
     elif "qwen" in name:
         body["enable_thinking"] = enabled
         body["chat_template_kwargs"] = {"enable_thinking": enabled}
-    elif "glm" in name or "bigmodel" in url or "zhipu" in url:
-        # GLM（智谱）：thinking.type 与 DeepSeek 同格式。但 GLM-5.3 / 5.3-flash / 5.3-flashx
-        # 是**强制思考**型号——模型层面不允许关闭（官方：传 disabled 返回 400，错误码 1210
+    elif "glm" in name or "bigmodel" in url or "zhipu" in url or _is_minimax(name):
+        # GLM（智谱）/ MiniMax：thinking.type 与 DeepSeek 同格式。但 GLM-5.3 / 5.3-flash / 5.3-flashx
+        # 是**强制思考**型号（含 MiniMax-M3.1）——模型层面不允许关闭（官方：传 disabled 返回 400，错误码 1210
         # 「该模型始终思考，请使用 low、high 或 max」）。实测经聚合网关（ofox 等）时 disabled
         # 会被静默**忽略**：请求通（200），但模型按**默认 max** 强度一路思考——客户端以为自己
         # 关掉了，实际拿到最贵最慢那一档，且报文里没有任何强度参数可查。
         # 故对强制思考型号恒发 enabled，把「关」降级为「开着但压到最低档」，而不是发一个无效的 disabled。
         glm_ver = _glm_version(name)
         forced_thinking = _glm_forced_thinking(name)
+        effort_min = _thinking_gates(name)[0]
         if enabled or forced_thinking:
             body["thinking"] = {"type": "enabled"}
-            # 思考强度：智谱官方独立参数 reasoning_effort（low/high/max，模型默认 max），
+            # 思考强度：官方独立参数（GLM/MiniMax） reasoning_effort（low/high/max，模型默认 max），
             # 与 thinking.type 开关分离。默认压到 low 省 token；客户端已显式传入则保留其档位。
-            # 仅 GLM-5.2+ 认该参数（低版本传了报错），故按版本门禁。
-            if glm_ver is not None and glm_ver >= _GLM_EFFORT_MIN_VER:
+            # 仅 GLM-5.2+ / MiniMax-3.1+ 认该参数（低版本传了报错），故按版本门禁。
+            if glm_ver is not None and glm_ver >= effort_min:
                 if forced_thinking and not enabled:
                     # 强制降级（客户端要关、型号关不掉）：不用客户端带来的档位，最低档处理
                     body["reasoning_effort"] = _GLM_THINKING_EFFORT
@@ -385,6 +486,14 @@ def _ingest_sse_chunk(
             continue
         try:
             data = json.loads(line[6:])
+            # Anthropic 原生事件（ofox /v1/messages 一族）先按 type 分流——必须先于下方
+            # 通用 usage 提取：message_delta 的顶层 usage 只有 output_tokens，落进通用
+            # 提取会把 prompt_tokens 覆写为 0，冲掉 message_start 已记下的 input_tokens
+            if data.get("type") in _ANTHROPIC_SSE_EVENT_TYPES:
+                _ingest_anthropic_sse_data(
+                    data, accumulated_content, accumulated_reasoning, accumulated_usage,
+                )
+                continue
             # 提取 usage（若有）：必须放在 choices 处理之前——
             # DeepSeek 等供应商的末帧 usage 带空 choices []，若先取 choices[0] 会 IndexError，
             # 导致 usage 提取被 except 吞掉，流式 token 记录丢失
@@ -409,6 +518,58 @@ def _ingest_sse_chunk(
         except (json.JSONDecodeError, KeyError, IndexError):
             pass
     return buf
+
+
+def _ingest_anthropic_sse_data(
+    data: dict,
+    accumulated_content: list[str],
+    accumulated_reasoning: list[str],
+    accumulated_usage: dict[str, int],
+) -> None:
+    """消费 Anthropic 原生 SSE 事件（ofox /v1/messages 等），累加正文/思维链/usage.
+
+    与 OpenAI chunk 的字段差异：
+      · 正文在 content_block_delta.delta.text，思维链在 thinking_delta.delta.thinking
+      · usage 拆两帧：message_start.message.usage.input_tokens（入参）、
+        message_delta.usage.output_tokens（出参终值），total 两帧各自求和
+      · 流内 error 事件以 HTTP 200 到达，只记日志（原始事件已透传给客户端自行处理）
+    缓存字段沿用 DeepSeek 口径换算：cache_read → hit、cache_creation → miss。
+    """
+    etype = data.get("type")
+    if etype == "content_block_delta":
+        delta = data.get("delta") or {}
+        dtype = delta.get("type")
+        if dtype == "text_delta" and delta.get("text"):
+            accumulated_content.append(delta["text"])
+        elif dtype == "thinking_delta" and delta.get("thinking"):
+            accumulated_reasoning.append(delta["thinking"])
+    elif etype == "message_start":
+        usage = ((data.get("message") or {}).get("usage") or {})
+        if usage.get("input_tokens") is not None:
+            cache_read = usage.get("cache_read_input_tokens") or 0
+            cache_creation = usage.get("cache_creation_input_tokens") or 0
+            # Anthropic 的 input_tokens 不含缓存部分；对齐 DeepSeek 口径——
+            # prompt_tokens = 未命中 + 命中 + 新建，hit/miss 作为其子集保留
+            accumulated_usage["prompt_tokens"] = usage.get("input_tokens", 0) + cache_read + cache_creation
+            accumulated_usage["completion_tokens"] = accumulated_usage.get("completion_tokens", 0)
+            accumulated_usage["prompt_cache_hit_tokens"] = cache_read
+            accumulated_usage["prompt_cache_miss_tokens"] = cache_creation
+            accumulated_usage["total_tokens"] = (
+                accumulated_usage["prompt_tokens"] + accumulated_usage["completion_tokens"]
+            )
+    elif etype == "message_delta":
+        usage = data.get("usage") or {}
+        if usage.get("output_tokens") is not None:
+            accumulated_usage["completion_tokens"] = usage.get("output_tokens", 0)
+            accumulated_usage["prompt_tokens"] = accumulated_usage.get("prompt_tokens", 0)
+            accumulated_usage["total_tokens"] = (
+                accumulated_usage["prompt_tokens"] + accumulated_usage["completion_tokens"]
+            )
+    elif etype == "error":
+        err = data.get("error") or {}
+        logger.error(
+            "Anthropic 原生流内 error 事件: type=%s message=%s", err.get("type"), err.get("message"),
+        )
 
 
 # ── 共享的模型拉取逻辑（call-manage 和 model-manage 共用） ──
@@ -575,13 +736,26 @@ async def chat_completions(
 
     # ── 校验并构造转发 URL ──
     raw_url = selected.com_url.rstrip("/")
-    # 如果 URL 不以 /chat/completions 结尾则自动追加
     # 兼容 DB 里存 https://openrouter.ai 或 https://openrouter.ai/api/v1 的情况
+    # Anthropic 原生协议（ofox 等：POST /anthropic/v1/messages）不走 /chat/completions：
+    #   · DB 存完整端点 …/v1/messages → 原样使用
+    #   · DB 存 …/anthropic 基址 → 补 /v1/messages
     if raw_url.endswith("/chat/completions"):
         forward_url = raw_url
+    elif raw_url.endswith("/messages"):
+        forward_url = raw_url
+    elif raw_url.endswith("/anthropic"):
+        forward_url = f"{raw_url}/v1/messages"
     else:
         forward_url = f"{raw_url}/chat/completions"
     _validate_url(forward_url)
+    # 原生端点判定只算一次，本方法内三处（response_format / max_tokens 兜底 / 认证头）共用
+    is_anthropic_native = _is_anthropic_native_url(forward_url)
+
+    # ── Anthropic 原生端点：请求体协议适配 ──
+    # messages 里的 role:"system" 提为顶层 system 字段（原生协议无 system 角色，不转换上游 400）
+    if is_anthropic_native:
+        _apply_anthropic_native_body(body)
 
     # ── 确定 API Key ──
     # 主 LLM：优先使用客户端提供的 key；异步 LLM：强制使用 DB 配置的 key
@@ -607,7 +781,13 @@ async def chat_completions(
     if x_starggle_response_format == "json_object":
         model_name_lower = selected.ai_model_name.lower()
         is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
-        if not is_o_series:
+        if is_anthropic_native:
+            # Anthropic 原生协议无 response_format 字段，注入会被上游 400 拒绝
+            logger.info(
+                "POST /call-manage/chat/completions -> Anthropic 原生端点不支持 response_format，跳过注入 model=%s",
+                selected.ai_model_name,
+            )
+        elif not is_o_series:
             body["response_format"] = {"type": "json_object"}
         else:
             logger.info(
@@ -677,8 +857,20 @@ async def chat_completions(
             llm_purpose, body.get("model"), body.get("temperature"), body.get("max_tokens"),
         )
 
+    # ── Anthropic 原生端点：max_tokens 必填，缺省兜底 ──
+    # 总控与客户端都没给时上游直接 400；兜底值须能装下思考预算收敛的最低余量
+    # （budget ≥1024 + 正文 ≥1024），且小于默认思考预算以触发下方收敛逻辑。
+    # bool 是 int 子类：JSON max_tokens=true 会漏过 isinstance int 判断，须显式排除
+    body_max_tokens = body.get("max_tokens")
+    if is_anthropic_native and (not isinstance(body_max_tokens, int) or isinstance(body_max_tokens, bool)):
+        body["max_tokens"] = _ANTHROPIC_DEFAULT_MAX_TOKENS
+        logger.info(
+            "POST /call-manage/chat/completions -> Anthropic 原生端点缺 max_tokens，注入默认 %d model=%s",
+            _ANTHROPIC_DEFAULT_MAX_TOKENS, model_name,
+        )
+
     # ── 思考参数注入：按选中模型/运营商的参数规范构造 ──
-    # 例外：强制思考型号（GLM-5.3 族）即使「未表达偏好」也要注入。它们关不掉，不注入就是
+    # 例外：强制思考型号（GLM-5.3 族 / MiniMax-M3.1+）即使「未表达偏好」也要注入。它们关不掉，不注入就是
     # 厂商默认 max（最贵最慢那一档）——异步链 is_think=NULL（跟随客户端）而客户端又不发
     # X-Starggle-Thinking 头时正是这条路。按「关闭请求」交给 _apply_thinking_params 降级为
     # enabled + 最低档；其余模型维持「缺头不注入、请求体原样透传」的既有契约。
@@ -691,8 +883,10 @@ async def chat_completions(
     # budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
     # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
     # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
+    # guard 不能只看 think_enabled：总控 is_think=NULL（跟随客户端）而客户端自带
+    # thinking.enabled 时，上方刚兜底注入的 max_tokens 可能小于其 budget，同样须收敛。
     # 注意：本块必须与上面的 if/elif **同级**，不能被塞进某个分支体——它自身已有按需 guard。
-    if think_enabled and "claude" in model_name.lower():
+    if "claude" in model_name.lower():
         thinking = body.get("thinking")
         if isinstance(thinking, dict) and thinking.get("type") == "enabled":
             max_tokens = body.get("max_tokens")
@@ -726,10 +920,18 @@ async def chat_completions(
         forward_url, body.get("model"),
     )
 
-    fwd_headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    # Anthropic 原生端点（ofox /v1/messages）：x-api-key + anthropic-version（协议样例只认 x-api-key）
+    if is_anthropic_native:
+        fwd_headers = {
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+    else:
+        fwd_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
     # 打印最终发往上游 LLM 的请求报文
     logger.info(
@@ -882,6 +1084,19 @@ async def chat_completions(
             # 记录 token 用量（非关键路径，失败不影响响应）
             try:
                 usage = (data or {}).get("usage") or {}
+                if usage and "prompt_tokens" not in usage and "input_tokens" in usage:
+                    # Anthropic 原生 usage 字段名 → OpenAI 口径（ofox /v1/messages 非流式）。
+                    # input_tokens 不含缓存部分，同流式口径（见 _ingest_anthropic_sse_data）并入 prompt
+                    cache_read = usage.get("cache_read_input_tokens") or 0
+                    cache_creation = usage.get("cache_creation_input_tokens") or 0
+                    prompt = usage.get("input_tokens", 0) + cache_read + cache_creation
+                    usage = {
+                        "prompt_tokens": prompt,
+                        "completion_tokens": usage.get("output_tokens", 0),
+                        "total_tokens": prompt + usage.get("output_tokens", 0),
+                        "prompt_cache_hit_tokens": cache_read,
+                        "prompt_cache_miss_tokens": cache_creation,
+                    }
                 await call_manage_service.record_token_usage(
                     db, x_starggle_user_id, model_name, llm_purpose,
                     is_stream=False, usage=usage,
