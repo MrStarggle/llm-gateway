@@ -752,6 +752,10 @@ async def chat_completions(
     # 原生端点判定只算一次，本方法内三处（response_format / max_tokens 兜底 / 认证头）共用
     is_anthropic_native = _is_anthropic_native_url(forward_url)
 
+    # ── 解析请求体（须先于下方协议适配，body 在此之前尚未赋值）──
+    body = await request.json()
+    body = _replace_core_prompts(body)
+
     # ── Anthropic 原生端点：请求体协议适配 ──
     # messages 里的 role:"system" 提为顶层 system 字段（原生协议无 system 角色，不转换上游 400）
     if is_anthropic_native:
@@ -768,10 +772,6 @@ async def chat_completions(
         api_key = client_key if client_key else selected.api_key
         if not api_key:
             raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
-
-    # ── 解析请求体 ──
-    body = await request.json()
-    body = _replace_core_prompts(body)
 
     # （思考模式注入统一移至下方 model 名解析之后：异步按总控 is_think，主模式按 X-Starggle-Thinking 头）
 
