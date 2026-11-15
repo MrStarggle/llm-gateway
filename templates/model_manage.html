@@ -1039,11 +1039,12 @@ print(resp.json())</pre>
                     <span class="hint">用于用量页估算成本；留空表示不统计。成本为估算值，实际账单以厂商为准。</span>
                 </div>
                 <div class="field">
-                    <label>额外配置 (JSON)</label>
+                    <label>模型扩展配置 (JSON)</label>
                     <input class="input mono" id="mExtraConfig" placeholder='{"voice": "alloy", "speed": 1.0}'>
+                    <span class="hint">模型自身扩展字段，如语音音色；与下方 OpenRouter 路由参数分开填写。</span>
                 </div>
                 <div class="field full">
-                    <label>提供商参数 (JSON)</label>
+                    <label>OpenRouter 路由参数 (JSON)</label>
                     <textarea class="textarea mono" id="mProviderConfig" placeholder='{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}'></textarea>
                     <span class="hint" id="providerParamHint">仅 OpenRouter 提供商会启用该参数。</span>
                 </div>
@@ -2074,7 +2075,8 @@ async function openModelModal(modelId) {
         document.getElementById('mInputPrice').value = hasValue(model.inputPricePer1m);
         document.getElementById('mOutputPrice').value = hasValue(model.outputPricePer1m);
         syncSamplingConflict();
-        document.getElementById('mExtraConfig').value = model.extraConfig || '';
+        // 第一个框只展示除 provider 外的模型扩展配置，provider 由下方单独编辑
+        document.getElementById('mExtraConfig').value = extraConfigWithoutProvider(model.extraConfig);
         document.getElementById('mProviderConfig').value = providerConfigFromExtra(model.extraConfig);
         document.getElementById('mRemarks').value = model.remarks || '';
         document.getElementById('modelLoadHint').textContent =
@@ -2322,6 +2324,15 @@ function buildExtraConfig() {
 function providerConfigFromExtra(extraConfig) {
     const obj = parseExtraConfig(extraConfig);
     return obj && obj.provider ? JSON.stringify(obj.provider, null, 2) : '';
+}
+
+// 编辑时把 provider 从「模型扩展配置」里剔除，避免和下方路由参数重复显示
+function extraConfigWithoutProvider(extraConfig) {
+    const obj = parseExtraConfig(extraConfig);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return extraConfig || '';
+    const rest = { ...obj };
+    delete rest.provider;
+    return Object.keys(rest).length ? JSON.stringify(rest, null, 2) : '';
 }
 
 async function submitModel() {
