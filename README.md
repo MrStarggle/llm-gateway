@@ -7,12 +7,16 @@
 
 - **多厂商统一接入**：OpenAI 兼容 `POST /chat/completions`，支持流式（SSE）与非流式
 - **提供商集中配置**：API 地址与 Key 在提供商层统一维护，模型引用提供商配置
-- **模型集群与轮询**：模型按 `async1..async9` 划分为 9 个集群，同集群内自动轮询
+- **模型集群与轮询**：模型按 `async1..async9` 划分为 9 个集群，同集群内按策略选择
+- **项目与 API Key**：按项目签发 `sk-gw-...` Token，支持吊销、轮换与模型范围限制
+- **项目配额**：每日/每月调用次数、Token 数与成本上限
+- **渠道健康**：成功率、TTFB 延迟、熔断/冷却，同集群内自动换渠道重试
+- **成本路由**：每个集群可选轮询、成本优先或延迟优先
 - **厂商参数适配**：内置 DeepSeek/GLM/MiniMax/Claude/Gemini/Qwen 等思考参数与协议差异处理
 - **模型级参数覆盖**：`temperature` / `top_p` / `top_k` / `max_tokens` 可按模型覆盖
-- **用量统计**：Token 用量、调用记录、按模型分布
-- **管理台**：提供商、模型、集群、用量与接入说明一体化
-- **单管理员模式**：环境变量配置账号，JWT 登录，无需额外用户系统
+- **用量统计**：Token 用量、调用记录、按项目/模型/功能码/用户分组
+- **业务能力**：提示词占位符注入、会员积分日限额、共享 JWT、用户/订单管理
+- **管理台**：提供商、模型、集群、项目、密钥、渠道健康与接入说明一体化
 
 ## 快速开始（Docker）
 
@@ -45,18 +49,23 @@ uvicorn main:app --host 0.0.0.0 --port 9010
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接 | localhost / 3306 / root / 空 / `llm_gateway` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号 | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | `dev-only-change-me` |
+| `ADMIN_USER_IDS` | 管理端 user_id 白名单，逗号分隔；为空时管理接口 fail-closed | 空 |
+| `STARGGLE_ENFORCE_QUOTA` | `1` 时按会员等级校验每日调用次数 | `1` |
+| `GATEWAY_TOKEN_REQUIRED` | `1` 时所有调用必须带 `sk-gw-` 项目 Token | `0` |
 | `PORT` | 服务端口 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时输出请求体调试日志 | `0` |
 | `CORS_ORIGINS` | 跨域管理台来源，逗号分隔 | 空（同源即可） |
 
 ## 调用
 
-统一入口：
+推荐使用 OpenAI 兼容入口 `/v1/chat/completions`：
 
 ```bash
-curl -X POST "http://localhost:9010/router/call-manage/chat/completions" \
+curl -X POST "http://localhost:9010/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-gw-你的项目Token" \
   -H "X-Async-Type: async1" \
+  -H "X-Feature-Code: role_reply" \
   -d '{
     "model": "",
     "messages": [{"role": "user", "content": "你好"}],
@@ -64,29 +73,84 @@ curl -X POST "http://localhost:9010/router/call-manage/chat/completions" \
   }'
 ```
 
+兼容入口：`/router/call-manage/chat/completions`、`/api/v1/call-manage/chat/completions`。
+
+OpenAI SDK：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:9010/v1",
+    api_key="sk-gw-你的项目Token",
+    default_headers={"X-Async-Type": "async1"},
+)
+resp = client.chat.completions.create(
+    model="",
+    messages=[{"role": "user", "content": "你好"}],
+)
+```
+
 请求头：
 
 | 请求头 | 取值 | 说明 |
 |---|---|---|
+| `Authorization` | `Bearer sk-gw-...` | 项目 Token；校验项目、配额与模型范围，不转发给上游 |
 | `X-Async-Type` | `async1`..`async9` | 模型集群；不传时主链默认 `async1`、异步链默认 `async2` |
-| `X-Purpose` | `main` / `async1`..`async13` | 用途标识，用于日志与用量统计 |
+| `X-Purpose` | `main` / `async1`..`async13` | 用途标识，用于日志、会员判定与用量统计 |
 | `X-Thinking` | `1` / `0` | 思考开关；仅在模型思考模式为「跟随请求」时生效 |
 | `X-Response-Format` | `json_object` | 要求 JSON 输出 |
-| `X-User-Id` | 调用方标识 | 用于调用记录与用量统计 |
-| `Authorization` | `Bearer <key>` | 可选；主链可覆盖服务端配置的上游 Key |
+| `X-User-Id` | 调用方标识 | 用于调用记录、用量统计与会员日限额 |
+| `X-Feature-Code` | 如 `role_reply` | 功能码，用于用量分组统计 |
+| `X-Request-Id` | 可选，≤64 字符 | 调用链路追踪；不传由网关生成 |
+
+> 不带 `sk-gw-` 前缀的 `Authorization` 保持旧语义：主链可覆盖上游 Key，异步链使用服务端 Key。
+> 带 `X-User-Id` 且未使用项目 Token 时，仍按会员等级校验每日调用次数。
+
+## 项目与配额
+
+1. 打开管理台 →「项目与密钥」→ 新增项目
+2. 在项目详情创建 Token，复制 `sk-gw-...`。完整密钥只显示一次
+3. 客户端用 `Authorization: Bearer sk-gw-...` 调用
+
+项目可设置六项限额：每日/每月 × 调用次数、Token 数、成本。规则：
+
+- 留空 = 不限，`0` = 禁止
+- 调用次数在请求前检查；Token/成本在响应后累计，属于软限额
+- 只有成功请求计数；网关内部重试仍算一次逻辑调用
+- 成本只累计与项目币种一致的记录，不做汇率换算
+- 配额超限返回 `429`，错误码如 `daily_call_quota_exceeded`
+- 项目 Token 走项目配额，不再叠加会员日限额；项目可停用但保留历史用量
+
+成功响应带 `X-Request-Id`、`X-Gateway-Model`、`X-Gateway-Cluster`、
+`X-Gateway-Retry-Count`。
+
+## 渠道健康与成本路由
+
+一个模型行视为一个渠道。网关记录今日成功/失败次数、平均 TTFB 延迟、连续失败次数与最后错误。
+
+- 连续失败达到阈值后熔断，冷却期间不再被选中
+- 冷却结束后自动半开探测；成功恢复，失败重新熔断
+- 同集群重试：连接失败、超时、429、5xx、401/403
+- 400/404/422 不重试
+- 全部渠道熔断时仍会降级尝试
+- 流式请求在开始向客户端输出前完成重试；开始输出后不再换渠道
+
+每个集群可选 `round_robin`（默认）、`cost_first`、`latency_first`；缺价格或延迟数据时退回轮询。
 
 ## 项目结构
 
 ```
 app/
-  api/v1/controller/   管理端、模型、调用转发接口
-  config/              数据库与运行配置
+  api/v1/controller/   管理端、模型、项目、渠道健康、调用转发接口
+  config/              数据库与运行配置、会员配置
   db/schema.sql        MySQL 建表脚本
-  models/              提供商、模型、用量 ORM
-  services/            模型选择/轮询、用量统计、提供商管理
-  utils/               JWT、雪花 ID、统一响应
+  models/              提供商、模型、用量、项目、Token、健康、路由 ORM
+  services/            模型选择/路由、用量统计、项目管理、渠道健康
+  utils/               JWT、雪花 ID、统一响应、OpenAI 错误格式
 templates/model_manage.html   管理台
-main.py                        FastAPI 入口
+templates/user_manage.html    用户 / 订单管理
+main.py                       FastAPI 入口
 ```
 
 ## License

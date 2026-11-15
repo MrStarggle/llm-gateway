@@ -375,6 +375,40 @@
         font-size: 12.5px; line-height: 1.75; overflow-x: auto; white-space: pre;
     }
 
+    /* ========== 项目 / 渠道健康 ========== */
+    .flex { display: flex; align-items: center; gap: 8px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .health-cluster {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 12px; padding: 14px 16px;
+    }
+    .health-cluster-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 10px; }
+    .health-cluster-stats { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-2); }
+    .health-cluster-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+    .status-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+        white-space: nowrap;
+    }
+    .status-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status-closed { color: #15803d; background: #ecfdf3; }
+    .status-open { color: #b42318; background: #fef3f2; }
+    .status-half_open { color: #b54708; background: #fffaeb; }
+    .status-disabled { color: #475467; background: #f2f4f7; }
+    .secret-box {
+        background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 10px;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12.5px; line-height: 1.7; word-break: break-all;
+    }
+    .detail-meta { color: var(--text-3); font-size: 12px; }
+    .route-input { width: 74px; }
+    @media (max-width: 1200px) {
+        .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 760px) {
+        .grid-3 { grid-template-columns: 1fr; }
+    }
+
     /* ========== 响应式 ========== */
     @media (max-width: 1200px) {
         .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -425,6 +459,15 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 <span>用户管理</span>
             </a>
+            <div class="nav-divider"></div>
+            <button class="nav-item" data-section="projects" onclick="switchSection('projects')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.85 12.15 6.15-6.15"/><path d="m18 5 1.5-1.5"/><path d="m15 8 1.5-1.5"/></svg>
+                <span>项目与密钥</span>
+            </button>
+            <button class="nav-item" data-section="health" onclick="switchSection('health')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+                <span>渠道健康</span>
+            </button>
             <div class="nav-divider"></div>
             <button class="nav-item" data-section="integration" onclick="switchSection('integration')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -564,6 +607,7 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                             <input class="input" id="callUser" placeholder="用户 ID">
                         </div>
+                        <input class="input" id="callProject" placeholder="项目 ID">
                         <input class="input" id="callModel" placeholder="模型名称">
                         <select class="select" id="callPurpose">
                             <option value="">全部用途</option>
@@ -594,6 +638,7 @@
                             <tr>
                                 <th>时间</th>
                                 <th>用户</th>
+                                <th>项目</th>
                                 <th>模型</th>
                                 <th>用途</th>
                                 <th>流式</th>
@@ -604,7 +649,7 @@
                             </tr>
                             </thead>
                             <tbody id="callBody">
-                            <tr><td colspan="9"><div class="empty">加载中...</div></td></tr>
+                            <tr><td colspan="10"><div class="empty">加载中...</div></td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -714,32 +759,213 @@
                 </div>
             </section>
 
+            <!-- ============ 项目与密钥 ============ -->
+            <section class="section" id="sec-projects">
+                <div class="section-head" style="justify-content:space-between">
+                    <div class="toolbar-search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                        <input class="input" id="projectKeyword" placeholder="搜索项目名称" oninput="loadProjects(true)">
+                    </div>
+                    <button class="btn btn-primary" onclick="openProjectModal()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                        新增项目
+                    </button>
+                </div>
+
+                <div class="card">
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>项目</th>
+                                <th>状态</th>
+                                <th>今日调用</th>
+                                <th>本月调用</th>
+                                <th>今日成本</th>
+                                <th>本月成本</th>
+                                <th>有效 Token</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="projectBody">
+                            <tr><td colspan="8"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" id="projectDetailCard" style="display:none;margin-top:18px">
+                    <div class="card-head">
+                        <div>
+                            <div class="card-title" id="projectDetailTitle">项目</div>
+                            <div class="card-sub" id="projectDetailSub"></div>
+                        </div>
+                        <div class="flex">
+                            <button class="btn btn-ghost btn-sm" onclick="showProjectCalls()">调用记录</button>
+                            <button class="btn btn-ghost btn-sm" onclick="editCurrentProject()">编辑项目</button>
+                            <button class="btn btn-ghost btn-sm" onclick="exportProjectCsv()">导出 CSV</button>
+                            <button class="btn btn-primary btn-sm" onclick="openTokenModal()">新建 Token</button>
+                        </div>
+                    </div>
+                    <div class="stat-grid" id="projectDetailStats"></div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>密钥</th>
+                                <th>允许模型</th>
+                                <th>状态</th>
+                                <th>最后使用</th>
+                                <th>过期时间</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="projectTokenBody">
+                            <tr><td colspan="7"><div class="empty">选择项目后查看 Token</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card-head" style="margin-top:20px">
+                        <div>
+                            <div class="card-title">近 30 天模型用量</div>
+                            <div class="card-sub" id="projectUsageSummary"></div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>模型</th>
+                                <th>调用次数</th>
+                                <th>输入 Token</th>
+                                <th>输出 Token</th>
+                                <th>总 Token</th>
+                                <th>成本</th>
+                            </tr>
+                            </thead>
+                            <tbody id="projectUsageBody">
+                            <tr><td colspan="6"><div class="empty">选择项目后查看用量</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 渠道健康 ============ -->
+            <section class="section" id="sec-health">
+                <div class="section-head" style="justify-content:space-between">
+                    <span class="muted" style="font-size:12px" id="healthUpdatedAt"></span>
+                    <button class="btn btn-ghost btn-sm" onclick="loadHealth(true)">刷新</button>
+                </div>
+
+                <div class="grid-3" id="healthClusterGrid"></div>
+
+                <div class="card" style="margin-top:18px">
+                    <div class="card-head">
+                        <div>
+                            <div class="card-title">集群路由策略</div>
+                            <div class="card-sub">重试、熔断与成本优先；修改后点击保存</div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>集群</th>
+                                <th>策略</th>
+                                <th>重试次数</th>
+                                <th>熔断阈值</th>
+                                <th>冷却（秒）</th>
+                                <th>输出占比</th>
+                                <th>启用</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="healthRoutingBody">
+                            <tr><td colspan="8"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:18px">
+                    <div class="card-head">
+                        <div>
+                            <div class="card-title">渠道健康</div>
+                            <div class="card-sub">今日成功率、平均延迟与熔断状态</div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>模型</th>
+                                <th>提供商</th>
+                                <th>集群</th>
+                                <th>状态</th>
+                                <th>今日成功率</th>
+                                <th>平均延迟</th>
+                                <th>连续失败</th>
+                                <th>最后错误</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="healthChannelBody">
+                            <tr><td colspan="9"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <!-- ============ 接入说明 ============ -->
             <section class="section" id="sec-integration">
                 <div class="doc-stack">
                     <div class="doc-hero">
                         <h2>OpenAI 兼容接口，按集群路由</h2>
-                        <p>所有模型请求统一转发到 <code>POST /router/call-manage/chat/completions</code>（同源备用
-                            <code>/api/v1/call-manage/chat/completions</code>）。请求体保持标准 OpenAI chat/completions
-                            格式，<code>model</code> 建议留空，由服务端按 <code>X-Async-Type</code> 指定的集群轮询选择模型。</p>
+                        <p>推荐使用 <code>POST /v1/chat/completions</code>，可直接作为 OpenAI SDK 的
+                            <code>base_url=http://你的地址:9010/v1</code>。兼容入口：
+                            <code>/router/call-manage/chat/completions</code>、
+                            <code>/api/v1/call-manage/chat/completions</code>。请求体保持标准 OpenAI
+                            chat/completions 格式，<code>model</code> 建议留空，由服务端按
+                            <code>X-Async-Type</code> 指定的集群选择模型。</p>
                     </div>
 
                     <div class="doc-grid">
                         <div class="card doc-card">
                             <h3>接入地址</h3>
                             <div class="doc-sub">Base URL 与端点</div>
-                            <p>推荐：<code>POST /router/call-manage/chat/completions</code></p>
-                            <p>备用：<code>POST /api/v1/call-manage/chat/completions</code></p>
+                            <p>推荐：<code>POST /v1/chat/completions</code>（OpenAI SDK 直接可用）</p>
+                            <p>兼容：<code>POST /router/call-manage/chat/completions</code></p>
+                            <p>兼容：<code>POST /api/v1/call-manage/chat/completions</code></p>
                             <p>支持 <code>stream: true</code>（SSE 原样透传）与普通 JSON 响应。模型名称、API 地址与
                                 API Key 均在管理页配置，调用方无需接触上游地址。</p>
                         </div>
                         <div class="card doc-card">
                             <h3>鉴权</h3>
-                            <div class="doc-sub">Authorization 可选</div>
-                            <p>模型已在「大模型提供商管理」中配置 API Key 时，请求方无需再传 key。</p>
-                            <p>如需覆盖主链 key，可传 <code>Authorization: Bearer &lt;key&gt;</code>；异步链始终使用服务端配置。</p>
-                            <p><code>X-User-Id</code> 用于调用记录与 token 用量统计，不传视为匿名调用。</p>
+                            <div class="doc-sub">项目 Token / 上游 Key / 会员限额</div>
+                            <p>推荐在「项目与密钥」创建项目，签发 <code>sk-gw-...</code> Token：
+                                <code>Authorization: Bearer sk-gw-...</code>。网关只把服务端配置的上游 Key
+                                转发给厂商，项目 Token 不会外泄。</p>
+                            <p>带 <code>sk-gw-</code> 前缀的 Token 一定会校验；无效、吊销、过期直接 401。
+                                项目 Token 走项目级配额，不再叠加会员日限额。</p>
+                            <p>不带 <code>sk-gw-</code> 前缀时保持旧语义：主链可覆盖上游 Key；携带
+                                <code>X-User-Id</code> 的请求仍按会员等级校验每日次数。</p>
                         </div>
+                    </div>
+
+                    <div class="card doc-card">
+                        <h3>项目配额与渠道健康</h3>
+                        <div class="doc-sub">按项目隔离用量，失败自动换渠道</div>
+                        <p>项目可设置每日/每月调用次数、Token 数和成本上限；留空=不限，<code>0</code>=禁止。
+                            调用次数在请求前检查，Token/成本在响应后累计，属于软限额。</p>
+                        <p>渠道按模型行统计今日成功率与 TTFB 延迟。连续失败达到阈值会熔断并冷却，
+                            冷却后自动半开探测；同集群内会在连接失败、超时、429、5xx、401/403 时换渠道重试。
+                            400/404/422 不重试。</p>
+                        <p>集群路由策略可在「渠道健康」切换轮询、成本优先、延迟优先。成功响应会带
+                            <code>X-Request-Id</code>、<code>X-Gateway-Model</code>、
+                            <code>X-Gateway-Cluster</code>、<code>X-Gateway-Retry-Count</code>。</p>
                     </div>
 
                     <div class="card doc-card">
@@ -774,7 +1000,22 @@
                                 <tr>
                                     <td><code>X-User-Id</code></td>
                                     <td>用户 ID</td>
-                                    <td>调用方标识，用于用量统计；不传视为匿名</td>
+                                    <td>调用方标识，用于用量统计与会员日限额；不传视为匿名</td>
+                                </tr>
+                                <tr>
+                                    <td><code>Authorization</code></td>
+                                    <td><code>Bearer sk-gw-...</code></td>
+                                    <td>项目 Token；网关校验项目、配额与模型范围，不会转发给上游</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Feature-Code</code></td>
+                                    <td>如 <code>role_reply</code></td>
+                                    <td>功能码，用于用量分组统计；不传或非法记为 <code>uncategorized</code></td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Request-Id</code></td>
+                                    <td>可选，≤64 字符</td>
+                                    <td>调用链路追踪 ID；不传由网关生成，并写入调用记录</td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -1059,6 +1300,122 @@ print(resp.json())</pre>
     </div>
 </div>
 
+<!-- ============ 项目 新增/编辑 ============ -->
+<div class="modal-overlay" id="projectOverlay">
+    <div class="modal wide">
+        <div class="modal-head">
+            <h3 id="projectModalTitle">新增项目</h3>
+            <button class="modal-close" onclick="closeProjectModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="projectEditId">
+            <div class="field-row">
+                <div class="field">
+                    <label><span class="req">*</span> 项目 / 团队名称</label>
+                    <input class="input" id="projectName" placeholder="例如：客服机器人 / 工作室 A">
+                </div>
+                <div class="field">
+                    <label>状态</label>
+                    <select class="select" id="projectStatus">
+                        <option value="active">启用</option>
+                        <option value="disabled">停用</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>每日调用上限</label>
+                    <input class="input" id="projectDailyCall" type="number" min="0" step="1" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>每月调用上限</label>
+                    <input class="input" id="projectMonthlyCall" type="number" min="0" step="1" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>每日 Token 上限</label>
+                    <input class="input" id="projectDailyToken" type="number" min="0" step="1" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>每月 Token 上限</label>
+                    <input class="input" id="projectMonthlyToken" type="number" min="0" step="1" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>每日成本上限</label>
+                    <input class="input" id="projectDailyCost" type="number" min="0" step="0.0001" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>每月成本上限</label>
+                    <input class="input" id="projectMonthlyCost" type="number" min="0" step="0.0001" placeholder="留空 = 不限">
+                </div>
+                <div class="field">
+                    <label>成本币种</label>
+                    <input class="input" id="projectCurrency" value="USD" maxlength="8" placeholder="USD">
+                    <span class="hint">只累计与该项目币种一致的调用成本，不做汇率换算。</span>
+                </div>
+                <div class="field full">
+                    <label>备注</label>
+                    <textarea class="textarea" id="projectRemarks" placeholder="可选备注"></textarea>
+                </div>
+            </div>
+            <span class="hint">限额留空 = 不限，0 = 禁止调用；调用次数在请求前检查，Token/成本在响应后累计（软限额）。</span>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeProjectModal()">取消</button>
+            <button class="btn btn-primary" id="projectSubmitBtn" onclick="submitProject()">确认新增</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ 项目 Token 新建 ============ -->
+<div class="modal-overlay" id="tokenOverlay">
+    <div class="modal">
+        <div class="modal-head">
+            <h3>新建 Token</h3>
+            <button class="modal-close" onclick="closeTokenModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="tokenProjectId">
+            <div class="field" style="margin-bottom:16px">
+                <label><span class="req">*</span> Token 名称</label>
+                <input class="input" id="tokenName" placeholder="例如：web-prod / 客服生产环境">
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>允许的模型</label>
+                <input class="input" id="tokenAllowedModels" placeholder="gpt-*, deepseek-*；留空 = 不限">
+                <span class="hint">逗号分隔，支持 * 通配；留空表示允许集群内所有模型。</span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>过期时间</label>
+                <input class="input" id="tokenExpiresAt" type="datetime-local">
+                <span class="hint">留空表示不过期。</span>
+            </div>
+            <div class="field">
+                <label>备注</label>
+                <textarea class="textarea" id="tokenRemarks" placeholder="可选备注"></textarea>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeTokenModal()">取消</button>
+            <button class="btn btn-primary" id="tokenSubmitBtn" onclick="submitToken()">创建</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ Token 一次性密钥 ============ -->
+<div class="modal-overlay" id="tokenSecretOverlay">
+    <div class="modal">
+        <div class="modal-head">
+            <h3>Token 已生成</h3>
+            <button class="modal-close" onclick="closeTokenSecret()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="hint" style="margin-bottom:12px">完整密钥只显示一次，请立即复制保存。关闭后无法再次查看。</p>
+            <div class="secret-box" id="tokenSecretValue"></div>
+            <div class="flex" style="margin-top:14px">
+                <button class="btn btn-primary btn-sm" onclick="copyTokenSecret()">复制密钥</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ============ 鉴权遮罩 ============ -->
 <div class="auth-overlay" id="authOverlay">
     <div class="auth-card">
@@ -1118,6 +1475,8 @@ const SECTION_META = {
     calls:     { title: '调用记录', desc: '按用户、模型与日期检索每一次 LLM 调用明细' },
     providers: { title: '大模型提供商管理', desc: '统一维护提供商名称、API 地址与 API Key' },
     models:    { title: '大模型管理', desc: '管理转发到各提供商的模型配置' },
+    projects:  { title: '项目与密钥', desc: '按项目签发 API Key，设置调用 / Token / 成本配额' },
+    health:    { title: '渠道健康', desc: '查看渠道成功率、延迟、熔断与成本路由策略' },
     integration: { title: '接入说明', desc: '接口地址、请求头、集群路由与调用示例' }
 };
 const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}';
@@ -1136,6 +1495,10 @@ let _callsPage = 1;
 let _callsPageSize = 20;
 let _callsTotal = 0;
 let _loaded = {};               // 各分区是否已加载
+let _projectCache = [];         // 项目列表缓存
+let _currentProject = null;     // 当前展开的项目
+let _projectTokens = [];        // 当前项目 Token
+let _healthData = null;         // 渠道健康看板数据
 
 // ==================== 鉴权 ====================
 function checkAuth() {
@@ -1235,15 +1598,20 @@ function lockPage() {
     document.getElementById('modelBody').innerHTML = '';
     document.getElementById('providerBody').innerHTML = '';
     document.getElementById('callBody').innerHTML = '';
+    document.getElementById('projectBody').innerHTML = '';
+    document.getElementById('projectTokenBody').innerHTML = '';
+    document.getElementById('healthClusterGrid').innerHTML = '';
+    document.getElementById('healthRoutingBody').innerHTML = '';
+    document.getElementById('healthChannelBody').innerHTML = '';
 }
 
 // ==================== API ====================
-async function api(method, path, body) {
+async function api(method, path, body, base) {
     const headers = { 'Content-Type': 'application/json' };
     if (_adminToken) headers['Authorization'] = 'Bearer ' + _adminToken;
     const opts = { method, headers };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(API_BASE + path, opts);
+    const res = await fetch((base || API_BASE) + path, opts);
     if (res.status === 401) {
         showAuthOverlay();
         throw new Error('Unauthorized');
@@ -1315,6 +1683,65 @@ function maskKey(key) {
 
 function splitList(value) { return (value || '').split(',').filter(Boolean); }
 
+function moduleApiBase(module) {
+    const base = API_BASE.replace(/\/model-manage\/?$/, '');
+    return base + '/' + module;
+}
+
+function copyPlainText(text) {
+    if (!text) return;
+    const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); toast('已复制'); }
+        catch (e) { toast('复制失败', false); }
+        ta.remove();
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => toast('已复制')).catch(fallback);
+    } else {
+        fallback();
+    }
+}
+
+function fmtLimit(v) {
+    if (v === null || v === undefined) return '不限';
+    if (Number(v) === 0) return '禁止';
+    return fmt(v);
+}
+
+function fmtMoney(v, currency) {
+    if (v === null || v === undefined) return '-';
+    const n = Number(v);
+    if (!isFinite(n)) return '-';
+    const cur = (currency || 'USD').toUpperCase();
+    const symbol = cur === 'USD' ? '$' : (cur + ' ');
+    return symbol + n.toFixed(n !== 0 && Math.abs(n) < 0.01 ? 6 : 4);
+}
+
+function fmtLimitMoney(v, currency) {
+    if (v === null || v === undefined) return '不限';
+    if (Number(v) === 0) return '禁止';
+    return fmtMoney(v, currency);
+}
+
+function statusBadge(status) {
+    if (status === 'open') return '<span class="status-badge status-open">熔断</span>';
+    if (status === 'half_open') return '<span class="status-badge status-half_open">半开</span>';
+    if (status === 'disabled') return '<span class="status-badge status-disabled">停用</span>';
+    if (status === 'revoked') return '<span class="status-badge status-disabled">已吊销</span>';
+    return '<span class="status-badge status-closed">正常</span>';
+}
+
+function setInputValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = (value === null || value === undefined) ? '' : value;
+}
+
 // ==================== 分区切换 ====================
 function switchSection(name) {
     _currentSection = name;
@@ -1335,6 +1762,8 @@ function loadCurrentSection(force) {
         calls: loadCalls,
         providers: loadProviders,
         models: loadModels,
+        projects: loadProjects,
+        health: loadHealth,
         integration: null
     };
     const loader = map[_currentSection];
@@ -1345,6 +1774,10 @@ function refreshSection() {
     _loaded = {};
     _providers = null;
     _companyCache = null;
+    _projectCache = [];
+    _currentProject = null;
+    _projectTokens = [];
+    _healthData = null;
     preloadProviders();
     loadCurrentSection(true);
 }
@@ -1359,8 +1792,13 @@ function switchEnv(envKey) {
     _providers = null;
     _companyCache = null;
     _modelCache = [];
+    _projectCache = [];
+    _currentProject = null;
+    _projectTokens = [];
+    _healthData = null;
     _loaded = {};
     _callsPage = 1;
+    hideProjectDetail();
     if (checkAuth()) {
         preloadProviders();
         loadCurrentSection(true);
@@ -1485,15 +1923,17 @@ function purposeLabel(p) {
 
 async function loadCalls() {
     const tbody = document.getElementById('callBody');
-    tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载中...</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10"><div class="empty">加载中...</div></td></tr>';
     const params = new URLSearchParams();
     params.set('page', _callsPage);
     params.set('page_size', _callsPageSize);
+    const projectId = document.getElementById('callProject').value.trim();
     const userId = document.getElementById('callUser').value.trim();
     const model = document.getElementById('callModel').value.trim();
     const purpose = document.getElementById('callPurpose').value;
     const start = document.getElementById('callStart').value;
     const end = document.getElementById('callEnd').value;
+    if (projectId) params.set('project_id', projectId);
     if (userId) params.set('user_id', userId);
     if (model) params.set('model', model);
     if (purpose) params.set('purpose', purpose);
@@ -1508,20 +1948,21 @@ async function loadCalls() {
         renderCallPagination();
         _loaded.calls = true;
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载失败</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10"><div class="empty">加载失败</div></td></tr>';
     }
 }
 
 function renderCalls(list) {
     const tbody = document.getElementById('callBody');
     if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">暂无调用记录</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10"><div class="empty">暂无调用记录</div></td></tr>';
         return;
     }
     tbody.innerHTML = list.map(r => `
         <tr>
             <td class="muted num" style="white-space:nowrap">${esc(fmtDateTime(r.createdAt))}</td>
             <td><span class="mono" style="font-size:12px">${esc(r.userId || '匿名')}</span></td>
+            <td><span class="mono" style="font-size:12px">${esc(r.projectId || '-')}</span></td>
             <td><span class="ellipsis" title="${esc(r.model)}">${esc(r.model || '-')}</span></td>
             <td>${purposeLabel(r.purpose)}</td>
             <td>${r.isStream === 1 || r.isStream === '1' ? '<span class="tag tag-green">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
@@ -1555,6 +1996,7 @@ function searchCalls() {
 }
 
 function resetCallFilters() {
+    document.getElementById('callProject').value = '';
     document.getElementById('callUser').value = '';
     document.getElementById('callModel').value = '';
     document.getElementById('callPurpose').value = '';
@@ -2325,6 +2767,498 @@ document.addEventListener('click', function (e) {
     if (!e.target.closest('#modelOverlay .combo')) closeModelCombo();
     if (!e.target.closest('#providerOverlay .combo')) closeCompanyCombo();
 });
+
+// ==================== 项目与密钥 ====================
+function projectApi(method, path, body) {
+    return api(method, path, body, moduleApiBase('project-manage'));
+}
+
+function hideProjectDetail() {
+    const card = document.getElementById('projectDetailCard');
+    if (card) card.style.display = 'none';
+}
+
+async function loadProjects(force) {
+    if (_loaded.projects && !force) return;
+    const keywordEl = document.getElementById('projectKeyword');
+    const keyword = keywordEl ? keywordEl.value.trim() : '';
+    const body = document.getElementById('projectBody');
+    try {
+        const result = await projectApi('GET', '/projects?keyword=' + encodeURIComponent(keyword));
+        _projectCache = result?.data?.list || [];
+        renderProjects();
+        _loaded.projects = true;
+    } catch (e) {
+        if (body) body.innerHTML = '<tr><td colspan="8"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function renderProjects() {
+    const body = document.getElementById('projectBody');
+    if (!body) return;
+    if (!_projectCache.length) {
+        body.innerHTML = '<tr><td colspan="8"><div class="empty">暂无项目，点击右上角新增</div></td></tr>';
+        hideProjectDetail();
+        _currentProject = null;
+        return;
+    }
+    body.innerHTML = _projectCache.map(p => {
+        const t = p.today || {};
+        const m = p.month || {};
+        return `
+            <tr>
+                <td><button class="btn btn-ghost btn-sm" onclick="selectProject('${p.projectId}')">${esc(p.projectName)}</button></td>
+                <td>${statusBadge(p.status)}</td>
+                <td class="num">${fmt(t.calls)}
+                    <div class="detail-meta">上限 ${fmtLimit(p.dailyCallLimit)} · ${fmtCompact(t.tokens)} tokens</div>
+                </td>
+                <td class="num">${fmt(m.calls)}
+                    <div class="detail-meta">上限 ${fmtLimit(p.monthlyCallLimit)} · ${fmtCompact(m.tokens)} tokens</div>
+                </td>
+                <td class="num">${fmtMoney(t.cost, p.costCurrency)}
+                    <div class="detail-meta">上限 ${fmtLimitMoney(p.dailyCostLimit, p.costCurrency)}</div>
+                </td>
+                <td class="num">${fmtMoney(m.cost, p.costCurrency)}
+                    <div class="detail-meta">上限 ${fmtLimitMoney(p.monthlyCostLimit, p.costCurrency)}</div>
+                </td>
+                <td class="num">${fmt(p.tokenCount)}</td>
+                <td style="text-align:right">
+                    <button class="btn btn-ghost btn-sm" onclick="selectProject('${p.projectId}')">管理</button>
+                    <button class="btn btn-ghost btn-sm" onclick="openProjectModal('${p.projectId}')">编辑</button>
+                </td>
+            </tr>`;
+    }).join('');
+
+    if (_currentProject) {
+        const latest = _projectCache.find(p => p.projectId === _currentProject.projectId);
+        if (latest) {
+            _currentProject = latest;
+            renderProjectDetail();
+        } else {
+            _currentProject = null;
+            hideProjectDetail();
+        }
+    } else {
+        hideProjectDetail();
+    }
+}
+
+async function selectProject(projectId) {
+    const project = _projectCache.find(p => p.projectId === projectId);
+    if (!project) return;
+    _currentProject = project;
+    document.getElementById('projectDetailCard').style.display = '';
+    document.getElementById('projectDetailTitle').textContent = project.projectName;
+    document.getElementById('projectDetailSub').textContent =
+        '项目 ID ' + project.projectId + ' · 成本币种 ' + project.costCurrency;
+    renderProjectDetail();
+    try {
+        const result = await projectApi('GET', '/projects/' + projectId);
+        _projectTokens = result?.data?.tokens || [];
+        renderProjectTokens();
+    } catch (e) {
+        _projectTokens = [];
+        renderProjectTokens();
+    }
+    await loadProjectUsage(projectId, project.costCurrency);
+}
+
+async function loadProjectUsage(projectId, currency) {
+    const body = document.getElementById('projectUsageBody');
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="6"><div class="empty">加载中...</div></td></tr>';
+    try {
+        const result = await projectApi('GET', '/projects/' + projectId + '/usage?days=30');
+        const usage = result?.data?.usage || {};
+        const summary = usage.summary || {};
+        const byModel = usage.byModel || [];
+        document.getElementById('projectUsageSummary').textContent =
+            '调用 ' + fmt(summary.calls) + ' 次 · ' + fmtCompact(summary.totalTokens) +
+            ' tokens · ' + fmtMoney(summary.cost, currency);
+        if (!byModel.length) {
+            body.innerHTML = '<tr><td colspan="6"><div class="empty">近 30 天暂无调用</div></td></tr>';
+            return;
+        }
+        body.innerHTML = byModel.map(r => `
+            <tr>
+                <td><span class="ellipsis" title="${esc(r.model)}">${esc(r.model || '-')}</span></td>
+                <td class="num">${fmt(r.calls)}</td>
+                <td class="num">${fmt(r.promptTokens)}</td>
+                <td class="num">${fmt(r.completionTokens)}</td>
+                <td class="num"><strong>${fmt(r.totalTokens)}</strong></td>
+                <td class="num">${fmtMoney(r.cost, currency)}</td>
+            </tr>`).join('');
+    } catch (e) {
+        body.innerHTML = '<tr><td colspan="6"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function renderProjectDetail() {
+    const p = _currentProject;
+    if (!p) return;
+    const t = p.today || {};
+    const m = p.month || {};
+    document.getElementById('projectDetailStats').innerHTML = `
+        <div class="stat">
+            <div class="stat-accent"></div>
+            <div class="stat-label">今日调用</div>
+            <div class="stat-value num">${fmt(t.calls)}</div>
+            <div class="stat-sub">上限 ${fmtLimit(p.dailyCallLimit)} · ${fmtCompact(t.tokens)} tokens</div>
+        </div>
+        <div class="stat">
+            <div class="stat-accent"></div>
+            <div class="stat-label">本月调用</div>
+            <div class="stat-value num">${fmt(m.calls)}</div>
+            <div class="stat-sub">上限 ${fmtLimit(p.monthlyCallLimit)} · ${fmtCompact(m.tokens)} tokens</div>
+        </div>
+        <div class="stat">
+            <div class="stat-accent"></div>
+            <div class="stat-label">今日成本</div>
+            <div class="stat-value num">${fmtMoney(t.cost, p.costCurrency)}</div>
+            <div class="stat-sub">上限 ${fmtLimitMoney(p.dailyCostLimit, p.costCurrency)}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-accent"></div>
+            <div class="stat-label">本月成本</div>
+            <div class="stat-value num">${fmtMoney(m.cost, p.costCurrency)}</div>
+            <div class="stat-sub">上限 ${fmtLimitMoney(p.monthlyCostLimit, p.costCurrency)}</div>
+        </div>`;
+}
+
+function renderProjectTokens() {
+    const body = document.getElementById('projectTokenBody');
+    if (!body) return;
+    if (!_projectTokens.length) {
+        body.innerHTML = '<tr><td colspan="7"><div class="empty">还没有 Token，点击右上角新建</div></td></tr>';
+        return;
+    }
+    body.innerHTML = _projectTokens.map(tk => {
+        const models = (tk.allowedModels || []).length
+            ? tk.allowedModels.map(x => esc(x)).join(', ')
+            : '全部模型';
+        return `
+            <tr>
+                <td>${esc(tk.name)}</td>
+                <td class="mono">${esc(tk.tokenPrefix)}…${esc(tk.tokenSuffix)}</td>
+                <td><span class="ellipsis" title="${esc(models)}">${models}</span></td>
+                <td>${statusBadge(tk.status)}</td>
+                <td>${fmtDateTime(tk.lastUsedAt)}</td>
+                <td>${fmtDateTime(tk.expiresAt)}</td>
+                <td style="text-align:right">
+                    <button class="btn btn-ghost btn-sm" onclick="rotateProjectToken('${tk.tokenId}')">轮换</button>
+                    <button class="btn btn-ghost btn-sm" onclick="revokeProjectToken('${tk.tokenId}')">吊销</button>
+                </td>
+            </tr>`;
+    }).join('');
+}
+
+function openProjectModal(projectId) {
+    const p = projectId ? _projectCache.find(x => x.projectId === projectId) : null;
+    document.getElementById('projectModalTitle').textContent = p ? '编辑项目' : '新增项目';
+    document.getElementById('projectEditId').value = p ? p.projectId : '';
+    setInputValue('projectName', p?.projectName);
+    setInputValue('projectStatus', p?.status || 'active');
+    setInputValue('projectDailyCall', p?.dailyCallLimit);
+    setInputValue('projectMonthlyCall', p?.monthlyCallLimit);
+    setInputValue('projectDailyToken', p?.dailyTokenLimit);
+    setInputValue('projectMonthlyToken', p?.monthlyTokenLimit);
+    setInputValue('projectDailyCost', p?.dailyCostLimit);
+    setInputValue('projectMonthlyCost', p?.monthlyCostLimit);
+    setInputValue('projectCurrency', p?.costCurrency || 'USD');
+    setInputValue('projectRemarks', p?.remarks);
+    document.getElementById('projectSubmitBtn').textContent = p ? '保存修改' : '确认新增';
+    document.getElementById('projectOverlay').classList.add('active');
+}
+
+function closeProjectModal() {
+    document.getElementById('projectOverlay').classList.remove('active');
+}
+
+async function submitProject() {
+    const editId = document.getElementById('projectEditId').value;
+    const name = document.getElementById('projectName').value.trim();
+    if (!name) { toast('请输入项目名称', false); return; }
+
+    const numOrNull = (id) => {
+        const raw = document.getElementById(id).value.trim();
+        return raw === '' ? null : Number(raw);
+    };
+    const body = {
+        project_name: name,
+        status: document.getElementById('projectStatus').value,
+        daily_call_limit: numOrNull('projectDailyCall'),
+        monthly_call_limit: numOrNull('projectMonthlyCall'),
+        daily_token_limit: numOrNull('projectDailyToken'),
+        monthly_token_limit: numOrNull('projectMonthlyToken'),
+        daily_cost_limit: numOrNull('projectDailyCost'),
+        monthly_cost_limit: numOrNull('projectMonthlyCost'),
+        cost_currency: (document.getElementById('projectCurrency').value.trim() || 'USD').toUpperCase(),
+        remarks: document.getElementById('projectRemarks').value.trim() || null
+    };
+
+    const btn = document.getElementById('projectSubmitBtn');
+    btn.disabled = true;
+    try {
+        const result = editId
+            ? await projectApi('PUT', '/projects/' + editId, body)
+            : await projectApi('POST', '/projects', body);
+        if (result.code === 200 || result.code === 201) {
+            toast(editId ? '更新成功' : '新增成功');
+            closeProjectModal();
+            _loaded.projects = false;
+            await loadProjects(true);
+            const targetId = editId || result?.data?.projectId;
+            if (targetId) await selectProject(targetId);
+        } else {
+            toast(result.message || '操作失败', false);
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function editCurrentProject() {
+    if (!_currentProject) return;
+    openProjectModal(_currentProject.projectId);
+}
+
+function showProjectCalls() {
+    if (!_currentProject) return;
+    document.getElementById('callProject').value = _currentProject.projectId;
+    switchSection('calls');
+    searchCalls();
+}
+
+function openTokenModal() {
+    if (!_currentProject) { toast('请先选择项目', false); return; }
+    document.getElementById('tokenProjectId').value = _currentProject.projectId;
+    setInputValue('tokenName', '');
+    setInputValue('tokenAllowedModels', '');
+    setInputValue('tokenExpiresAt', '');
+    setInputValue('tokenRemarks', '');
+    document.getElementById('tokenOverlay').classList.add('active');
+}
+
+function closeTokenModal() {
+    document.getElementById('tokenOverlay').classList.remove('active');
+}
+
+async function submitToken() {
+    const projectId = document.getElementById('tokenProjectId').value;
+    const name = document.getElementById('tokenName').value.trim();
+    if (!projectId) { toast('请先选择项目', false); return; }
+    if (!name) { toast('请输入 Token 名称', false); return; }
+
+    const allowedRaw = document.getElementById('tokenAllowedModels').value.trim();
+    const allowed = allowedRaw
+        ? allowedRaw.split(',').map(x => x.trim()).filter(Boolean)
+        : null;
+    const expiresRaw = document.getElementById('tokenExpiresAt').value;
+    const expiresAt = expiresRaw ? new Date(expiresRaw).toISOString() : null;
+
+    const btn = document.getElementById('tokenSubmitBtn');
+    btn.disabled = true;
+    try {
+        const result = await projectApi('POST', '/projects/' + projectId + '/tokens', {
+            name,
+            allowed_models: allowed,
+            expires_at: expiresAt,
+            remarks: document.getElementById('tokenRemarks').value.trim() || null
+        });
+        if (result.code === 200 || result.code === 201) {
+            closeTokenModal();
+            showTokenSecret(result.data?.token || '');
+            await refreshCurrentProject();
+        } else {
+            toast(result.message || '创建失败', false);
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function showTokenSecret(raw) {
+    document.getElementById('tokenSecretValue').textContent = raw || '';
+    document.getElementById('tokenSecretOverlay').classList.add('active');
+}
+
+function closeTokenSecret() {
+    document.getElementById('tokenSecretOverlay').classList.remove('active');
+}
+
+function copyTokenSecret() {
+    copyPlainText(document.getElementById('tokenSecretValue').textContent || '');
+}
+
+async function refreshCurrentProject() {
+    if (!_currentProject) return;
+    const id = _currentProject.projectId;
+    _loaded.projects = false;
+    await loadProjects(true);
+    await selectProject(id);
+}
+
+async function revokeProjectToken(tokenId) {
+    if (!confirm('吊销后该密钥立即失效，确定继续？')) return;
+    const result = await projectApi('POST', '/tokens/' + tokenId + '/revoke');
+    if (result.code === 200) {
+        toast('已吊销');
+        await refreshCurrentProject();
+    } else {
+        toast(result.message || '吊销失败', false);
+    }
+}
+
+async function rotateProjectToken(tokenId) {
+    if (!confirm('轮换后旧密钥立即失效，确定继续？')) return;
+    const result = await projectApi('POST', '/tokens/' + tokenId + '/rotate', {});
+    if (result.code === 200) {
+        showTokenSecret(result.data?.token || '');
+        await refreshCurrentProject();
+    } else {
+        toast(result.message || '轮换失败', false);
+    }
+}
+
+function projectApiUrl(path) {
+    return moduleApiBase('project-manage') + path;
+}
+
+async function exportProjectCsv() {
+    if (!_currentProject) return;
+    const url = projectApiUrl('/projects/' + _currentProject.projectId + '/records.csv');
+    try {
+        const res = await fetch(url, {
+            headers: _adminToken ? { 'Authorization': 'Bearer ' + _adminToken } : {}
+        });
+        if (!res.ok) { toast('导出失败', false); return; }
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'project-' + _currentProject.projectId + '-records.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        toast('已开始下载');
+    } catch (e) {
+        toast('导出失败', false);
+    }
+}
+
+// ==================== 渠道健康 ====================
+function healthApi(method, path, body) {
+    return api(method, path, body, moduleApiBase('health-manage'));
+}
+
+async function loadHealth(force) {
+    if (_loaded.health && !force) return;
+    try {
+        const result = await healthApi('GET', '/overview');
+        _healthData = result?.data || {};
+        renderHealth();
+        _loaded.health = true;
+    } catch (e) {
+        document.getElementById('healthClusterGrid').innerHTML = '<div class="empty">加载失败</div>';
+    }
+}
+
+function routingOptions(current) {
+    return [
+        ['round_robin', '轮询'],
+        ['cost_first', '成本优先'],
+        ['latency_first', '延迟优先']
+    ].map(([value, label]) =>
+        `<option value="${value}" ${String(current) === value ? 'selected' : ''}>${label}</option>`
+    ).join('');
+}
+
+function renderHealth() {
+    const data = _healthData || {};
+    document.getElementById('healthUpdatedAt').textContent =
+        data.generatedAt ? '更新于 ' + fmtDateTime(data.generatedAt) : '';
+
+    const clusters = data.clusters || [];
+    document.getElementById('healthClusterGrid').innerHTML = clusters.length
+        ? clusters.map(c => `
+            <div class="health-cluster">
+                <div class="health-cluster-head">
+                    <span>${esc(c.asyncType)}</span>
+                    <span class="detail-meta">${fmt(c.total)} 个模型</span>
+                </div>
+                <div class="health-cluster-stats">
+                    <span>正常 <b>${fmt(c.healthy)}</b></span>
+                    <span>半开 <b>${fmt(c.halfOpen)}</b></span>
+                    <span>熔断 <b>${fmt(c.open)}</b></span>
+                </div>
+            </div>`).join('')
+        : '<div class="empty">暂无渠道</div>';
+
+    const routing = data.routing || [];
+    document.getElementById('healthRoutingBody').innerHTML = routing.length
+        ? routing.map(r => `
+            <tr>
+                <td><code>${esc(r.asyncType)}</code></td>
+                <td><select class="select" id="routeStrategy-${r.asyncType}">${routingOptions(r.strategy)}</select></td>
+                <td><input class="input route-input" id="routeRetry-${r.asyncType}" type="number" min="0" max="2" value="${r.retryMax}"></td>
+                <td><input class="input route-input" id="routeThreshold-${r.asyncType}" type="number" min="1" max="100" value="${r.failureThreshold}"></td>
+                <td><input class="input route-input" id="routeCooldown-${r.asyncType}" type="number" min="0" max="3600" value="${r.cooldownSeconds}"></td>
+                <td><input class="input route-input" id="routeRatio-${r.asyncType}" type="number" min="0" max="1" step="0.05" value="${r.outputRatio}"></td>
+                <td><select class="select" id="routeEnabled-${r.asyncType}">
+                    <option value="1" ${Number(r.enabled) === 1 ? 'selected' : ''}>启用</option>
+                    <option value="0" ${Number(r.enabled) === 0 ? 'selected' : ''}>关闭</option>
+                </select></td>
+                <td style="text-align:right"><button class="btn btn-primary btn-sm" onclick="saveRouting('${r.asyncType}')">保存</button></td>
+            </tr>`).join('')
+        : '<tr><td colspan="8"><div class="empty">暂无配置</div></td></tr>';
+
+    const channels = data.channels || [];
+    document.getElementById('healthChannelBody').innerHTML = channels.length
+        ? channels.map(c => `
+            <tr>
+                <td><span class="ellipsis" title="${esc(c.modelName)}">${esc(c.modelName)}</span></td>
+                <td>${esc(c.providerName || '-')}</td>
+                <td><code>${esc(c.asyncType)}</code></td>
+                <td>${statusBadge(c.state)}
+                    ${c.cooldownRemainingSeconds ? `<span class="detail-meta"> ${fmt(c.cooldownRemainingSeconds)}s</span>` : ''}
+                </td>
+                <td class="num">${c.successRate === null || c.successRate === undefined ? '-' : Number(c.successRate).toFixed(1) + '%'}</td>
+                <td class="num">${c.avgLatencyMs === null || c.avgLatencyMs === undefined ? '-' : Math.round(Number(c.avgLatencyMs)) + ' ms'}</td>
+                <td class="num">${fmt(c.consecutiveFailures)}</td>
+                <td><span class="ellipsis" title="${esc(c.lastError || '')}">${esc(c.lastError || '-')}</span></td>
+                <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="resetChannel('${c.modelId}')">重置</button></td>
+            </tr>`).join('')
+        : '<tr><td colspan="9"><div class="empty">暂无启用中的模型</div></td></tr>';
+}
+
+async function saveRouting(asyncType) {
+    const body = {
+        strategy: document.getElementById('routeStrategy-' + asyncType).value,
+        retry_max: Number(document.getElementById('routeRetry-' + asyncType).value),
+        failure_threshold: Number(document.getElementById('routeThreshold-' + asyncType).value),
+        cooldown_seconds: Number(document.getElementById('routeCooldown-' + asyncType).value),
+        output_ratio: Number(document.getElementById('routeRatio-' + asyncType).value),
+        enabled: Number(document.getElementById('routeEnabled-' + asyncType).value)
+    };
+    const result = await healthApi('PUT', '/routing/' + asyncType, body);
+    if (result.code === 200) {
+        toast('路由策略已保存');
+        await loadHealth(true);
+    } else {
+        toast(result.message || '保存失败', false);
+    }
+}
+
+async function resetChannel(modelId) {
+    if (!confirm('确定重置该渠道的熔断状态？')) return;
+    const result = await healthApi('POST', '/channels/' + modelId + '/reset');
+    if (result.code === 200) {
+        toast('已重置');
+        await loadHealth(true);
+    } else {
+        toast(result.message || '重置失败', false);
+    }
+}
 
 // ==================== 初始化 ====================
 renderEnvironments();

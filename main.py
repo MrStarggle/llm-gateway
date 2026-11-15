@@ -1,6 +1,8 @@
 """LLM Gateway - 多厂商大模型统一接入网关"""
 import logging
 import os
+import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,6 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 from app.api.v1.api import api_router  # noqa: E402
+from app.api.v1.controller import call_manage_controller  # noqa: E402
 
 logger = logging.getLogger()  # root logger — 让所有模块的日志都能输出
 logger.setLevel(logging.INFO)
@@ -48,6 +51,40 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="LLM Gateway", lifespan=lifespan)
 
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+class RequestIdMiddleware:
+    """为每个请求生成/透传 X-Request-Id，纯 ASGI 实现，不影响流式响应."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        raw = ""
+        for key, value in scope.get("headers", []):
+            if key.lower() == b"x-request-id":
+                raw = value.decode("latin-1").strip()
+                break
+        request_id = raw if _REQUEST_ID_RE.match(raw) else uuid.uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        async def send_with_request_id(message):
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+                headers[:] = [
+                    (k, v) for k, v in headers if k.lower() != b"x-request-id"
+                ]
+                headers.append((b"x-request-id", request_id.encode("latin-1")))
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
+
+
 # 管理台默认同源访问；跨域部署时通过 CORS_ORIGINS 配置允许来源（逗号分隔）
 _cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
@@ -58,6 +95,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 最后添加的中间件最先执行，确保所有响应都带请求 ID
+app.add_middleware(RequestIdMiddleware)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
@@ -66,6 +105,9 @@ app.include_router(api_router, prefix="/api/v1")
 
 # 同时挂载到 /router 中间路径（兼容既有调用）
 app.include_router(api_router, prefix="/router")
+
+# OpenAI 客户端友好入口：base_url=http://host:9010/v1
+app.include_router(call_manage_controller.router, prefix="/v1", tags=["OpenAI 兼容入口"])
 
 
 # ---------- 前端管理台 ----------
