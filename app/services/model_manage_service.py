@@ -1,6 +1,7 @@
 """模型管理 业务逻辑层"""
 import logging
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,11 @@ from app.schemas.model_manage import ModelManageCreate, ModelManageUpdate, Model
 from app.utils.SnowflakeIDGenerator import snowflake_id_generator
 
 logger = logging.getLogger(__name__)
+
+
+def _to_decimal(value: float | None) -> Decimal | None:
+    """金额/单价转 Decimal，避免 float 精度问题"""
+    return None if value is None else Decimal(str(value))
 
 
 async def get_model_list(
@@ -84,6 +90,11 @@ async def create_model(db: AsyncSession, data: ModelManageCreate) -> ModelManage
         top_p=data.top_p,
         top_k=data.top_k,
         max_tokens=data.max_tokens,
+        input_price_per_1m=_to_decimal(data.input_price_per_1m),
+        output_price_per_1m=_to_decimal(data.output_price_per_1m),
+        price_currency=data.price_currency or "USD",
+        price_source="manual" if (data.input_price_per_1m is not None or data.output_price_per_1m is not None) else None,
+        price_updated_at=datetime.now() if (data.input_price_per_1m is not None or data.output_price_per_1m is not None) else None,
         extra_config=data.extra_config,
         remarks=data.remarks,
     )
@@ -109,6 +120,16 @@ async def update_model(db: AsyncSession, model_id: str, data: ModelManageUpdate)
         update_data["com_name"] = com_name
         update_data["com_url"] = com_url
         update_data["api_key"] = api_key
+
+    price_fields = {"input_price_per_1m", "output_price_per_1m"}
+    if price_fields & update_data.keys():
+        for field in price_fields:
+            if field in update_data:
+                update_data[field] = _to_decimal(update_data[field])
+        update_data["price_source"] = "manual"
+        update_data["price_updated_at"] = datetime.now()
+    if "price_currency" in update_data and not update_data["price_currency"]:
+        update_data["price_currency"] = "USD"
 
     update_data["updated_at"] = datetime.now()
     stmt = (

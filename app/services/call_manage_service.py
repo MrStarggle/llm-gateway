@@ -9,6 +9,7 @@
 import asyncio
 import logging
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -128,11 +129,17 @@ async def record_token_usage(
     is_stream: bool,
     usage: dict,
     feature_code: str = "uncategorized",
+    input_price_per_1m: float | Decimal | None = None,
+    output_price_per_1m: float | Decimal | None = None,
+    price_currency: str = "USD",
+    provider_cost: float | Decimal | None = None,
 ) -> None:
     """记录一次 LLM 调用：当日计数 +1（user_daily_quota）与 token 明细一行（user_token_info）.
 
     非关键路径：任一失败仅记录日志，绝不影响 LLM 响应的返回.
     只要调用发生（user_id 存在）计数即 +1；明细仍要求 usage 非空.
+
+    成本优先级：上游返回的 provider_cost（如 OpenRouter）> 模型单价估算 > 不记录.
     """
     if not user_id:
         return
@@ -140,17 +147,41 @@ async def record_token_usage(
 
     if not usage:
         return
+
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+
+    cost_value: Decimal | None = None
+    cost_currency: str | None = None
+    cost_source: str | None = None
+    if provider_cost is not None:
+        cost_value = Decimal(str(provider_cost)).quantize(Decimal("0.00000001"))
+        cost_currency = "USD"
+        cost_source = "provider"
+    elif input_price_per_1m is not None or output_price_per_1m is not None:
+        input_price = Decimal(str(input_price_per_1m or 0))
+        output_price = Decimal(str(output_price_per_1m or 0))
+        cost_value = (
+            Decimal(prompt_tokens) * input_price + Decimal(completion_tokens) * output_price
+        ) / Decimal("1000000")
+        cost_value = cost_value.quantize(Decimal("0.00000001"))
+        cost_currency = (price_currency or "USD")[:8]
+        cost_source = "estimate"
+
     record = UserTokenInfo(
         user_id=user_id[:64],
         model=(model or "")[:128],
         purpose=(purpose or "main")[:16],
         feature_code=(feature_code or "uncategorized")[:64],
         is_stream=1 if is_stream else 0,
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
         total_tokens=int(usage.get("total_tokens") or 0),
         prompt_cache_hit_tokens=int(usage.get("prompt_cache_hit_tokens") or 0),
         prompt_cache_miss_tokens=int(usage.get("prompt_cache_miss_tokens") or 0),
+        estimated_cost=cost_value,
+        cost_currency=cost_currency,
+        cost_source=cost_source,
         record_date=date.today(),
     )
     try:

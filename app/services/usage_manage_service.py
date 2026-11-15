@@ -51,6 +51,7 @@ async def get_usage_overview(
             func.coalesce(func.sum(UserTokenInfo.completion_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.total_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.prompt_cache_hit_tokens), 0),
+            func.sum(UserTokenInfo.estimated_cost),
         )
         .where(UserTokenInfo.record_date >= start)
         .group_by(UserTokenInfo.record_date)
@@ -77,6 +78,7 @@ async def get_usage_overview(
             "completionTokens": int(row[3] or 0),
             "totalTokens": int(row[4] or 0),
             "cacheHitTokens": int(row[5] or 0),
+            "cost": None if row[6] is None else float(row[6]),
         }
         for row in token_rows
     }
@@ -93,6 +95,7 @@ async def get_usage_overview(
             "promptTokens": token.get("promptTokens", 0),
             "completionTokens": token.get("completionTokens", 0),
             "totalTokens": token.get("totalTokens", 0),
+            "cost": token.get("cost"),
         })
         cursor += timedelta(days=1)
 
@@ -103,6 +106,7 @@ async def get_usage_overview(
             func.coalesce(func.sum(UserTokenInfo.prompt_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.completion_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.total_tokens), 0),
+            func.sum(UserTokenInfo.estimated_cost),
         )
         .where(UserTokenInfo.record_date >= start)
         .group_by(UserTokenInfo.model)
@@ -117,6 +121,7 @@ async def get_usage_overview(
             "promptTokens": int(row[2] or 0),
             "completionTokens": int(row[3] or 0),
             "totalTokens": int(row[4] or 0),
+            "cost": None if row[5] is None else float(row[5]),
         }
         for row in model_rows
     ]
@@ -134,6 +139,7 @@ async def get_usage_overview(
             func.coalesce(func.sum(UserTokenInfo.prompt_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.completion_tokens), 0),
             func.coalesce(func.sum(UserTokenInfo.total_tokens), 0),
+            func.sum(UserTokenInfo.estimated_cost),
         )
         .where(UserTokenInfo.record_date >= start)
         .group_by(*columns)
@@ -155,14 +161,16 @@ async def get_usage_overview(
                 value = value or "-"
             item[key] = value
         item.update({
-            "calls": int(row[-4] or 0),
-            "promptTokens": int(row[-3] or 0),
-            "completionTokens": int(row[-2] or 0),
-            "totalTokens": int(row[-1] or 0),
+            "calls": int(row[-5] or 0),
+            "promptTokens": int(row[-4] or 0),
+            "completionTokens": int(row[-3] or 0),
+            "totalTokens": int(row[-2] or 0),
+            "cost": None if row[-1] is None else float(row[-1]),
         })
         grouped.append(item)
 
     total_tokens = sum(d["totalTokens"] for d in daily)
+    daily_costs = [d["cost"] for d in daily if d["cost"] is not None]
     summary = {
         "days": days,
         "startDate": start.isoformat(),
@@ -174,6 +182,7 @@ async def get_usage_overview(
         "completionTokens": sum(d["completionTokens"] for d in daily),
         "totalTokens": total_tokens,
         "cacheHitTokens": sum(t.get("cacheHitTokens", 0) for t in token_map.values()),
+        "cost": sum(daily_costs) if daily_costs else None,
     }
 
     return {
@@ -243,6 +252,9 @@ async def list_call_records(
             "totalTokens": int(row.total_tokens or 0),
             "cacheHitTokens": int(row.prompt_cache_hit_tokens or 0),
             "cacheMissTokens": int(row.prompt_cache_miss_tokens or 0),
+            "estimatedCost": None if row.estimated_cost is None else float(row.estimated_cost),
+            "costCurrency": row.cost_currency,
+            "costSource": row.cost_source,
             "recordDate": row.record_date.isoformat() if row.record_date else None,
             "createdAt": row.created_at.isoformat() if row.created_at else None,
         })

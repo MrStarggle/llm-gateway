@@ -128,22 +128,35 @@ async def _configure_sqlite() -> None:
         await conn.execute(text("PRAGMA busy_timeout=5000"))
 
 
+_SQLITE_COLUMN_MIGRATIONS = [
+    ("user_token_info", "feature_code", "VARCHAR(64) NOT NULL DEFAULT 'uncategorized'",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_feature_code ON user_token_info (feature_code)"),
+    ("user_token_info", "estimated_cost", "NUMERIC(18,8) NULL", None),
+    ("user_token_info", "cost_currency", "VARCHAR(8) NULL", None),
+    ("user_token_info", "cost_source", "VARCHAR(16) NULL", None),
+    ("model_manage_info", "input_price_per_1m", "NUMERIC(18,6) NULL", None),
+    ("model_manage_info", "output_price_per_1m", "NUMERIC(18,6) NULL", None),
+    ("model_manage_info", "price_currency", "VARCHAR(8) NOT NULL DEFAULT 'USD'", None),
+    ("model_manage_info", "price_source", "VARCHAR(16) NULL", None),
+    ("model_manage_info", "price_updated_at", "DATETIME NULL", None),
+]
+
+
 async def _ensure_sqlite_schema() -> None:
     """SQLite 存量库补列（create_all 不会修改已存在的表）."""
     async with engine.begin() as conn:
-        columns = {
-            row[1] for row in (await conn.execute(text("PRAGMA table_info(user_token_info)"))).fetchall()
-        }
-        if "feature_code" not in columns:
-            await conn.execute(text(
-                "ALTER TABLE user_token_info "
-                "ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized'"
-            ))
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_user_token_info_feature_code "
-                "ON user_token_info (feature_code)"
-            ))
-            print(" SQLite 迁移执行成功: user_token_info.feature_code")
+        by_table: dict[str, set[str]] = {}
+        for table, column, ddl, index_sql in _SQLITE_COLUMN_MIGRATIONS:
+            if table not in by_table:
+                rows = await conn.execute(text(f"PRAGMA table_info({table})"))
+                by_table[table] = {row[1] for row in rows.fetchall()}
+            if column in by_table[table]:
+                continue
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            if index_sql:
+                await conn.execute(text(index_sql))
+            by_table[table].add(column)
+            print(f" SQLite 迁移执行成功: {table}.{column}")
 
 
 async def _init_mysql_schema() -> None:
@@ -236,6 +249,15 @@ async def run_migrations():
         # 用量分组统计：功能码（调用方通过 X-Feature-Code 声明）
         "ALTER TABLE user_token_info ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized' COMMENT '功能码（用量分组统计用）'",
         "ALTER TABLE user_token_info ADD INDEX idx_user_token_feature_code (feature_code)",
+        # 成本估算：模型单价 + 每次调用成本快照
+        "ALTER TABLE model_manage_info ADD COLUMN input_price_per_1m DECIMAL(18,6) NULL COMMENT '输入单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN output_price_per_1m DECIMAL(18,6) NULL COMMENT '输出单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '价格币种'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_source VARCHAR(16) NULL COMMENT '价格来源：manual/provider'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_updated_at DATETIME NULL COMMENT '价格更新时间'",
+        "ALTER TABLE user_token_info ADD COLUMN estimated_cost DECIMAL(18,8) NULL COMMENT '本次调用成本（估算或上游返回）'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_currency VARCHAR(8) NULL COMMENT '成本币种'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_source VARCHAR(16) NULL COMMENT '成本来源：estimate/provider'",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

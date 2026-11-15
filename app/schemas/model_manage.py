@@ -24,6 +24,9 @@ class ModelManageCreate(BaseModel):
     top_p: float | None = Field(default=None, ge=0, le=1, description="覆盖请求体top_p；null=不覆盖（与temperature互斥）")
     top_k: int | None = Field(default=None, ge=1, le=1000, description="覆盖请求体top_k；null=不覆盖（部分厂商不支持）")
     max_tokens: int | None = Field(default=None, ge=1, le=100000, description="覆盖请求体max_tokens；null=不覆盖")
+    input_price_per_1m: float | None = Field(default=None, ge=0, description="输入单价（每 1M token）")
+    output_price_per_1m: float | None = Field(default=None, ge=0, description="输出单价（每 1M token）")
+    price_currency: str = Field(default="USD", max_length=8, description="价格币种")
     extra_config: str | None = Field(default=None, description="语音模型JSON配置")
     remarks: str | None = Field(default=None, description="备注")
 
@@ -54,6 +57,9 @@ class ModelManageUpdate(BaseModel):
     top_p: float | None = Field(default=None, ge=0, le=1, description="覆盖请求体top_p；null=不覆盖（与temperature互斥）")
     top_k: int | None = Field(default=None, ge=1, le=1000, description="覆盖请求体top_k；null=不覆盖（部分厂商不支持）")
     max_tokens: int | None = Field(default=None, ge=1, le=100000, description="覆盖请求体max_tokens；null=不覆盖")
+    input_price_per_1m: float | None = Field(default=None, ge=0, description="输入单价（每 1M token）")
+    output_price_per_1m: float | None = Field(default=None, ge=0, description="输出单价（每 1M token）")
+    price_currency: str | None = Field(default=None, max_length=8, description="价格币种")
     extra_config: str | None = Field(default=None, description="语音模型JSON配置")
     remarks: str | None = Field(default=None, description="备注")
 

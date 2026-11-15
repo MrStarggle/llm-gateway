@@ -443,7 +443,7 @@ def _ingest_sse_chunk(
     buf: bytes,
     accumulated_content: list[str],
     accumulated_reasoning: list[str],
-    accumulated_usage: dict[str, int],
+    accumulated_usage: dict[str, Any],
     flush: bool = False,
 ) -> bytes:
     """消费 ``buf`` 里的**完整** SSE 行并累加，返回残余的半行（留给下次拼接）。
@@ -488,6 +488,8 @@ def _ingest_sse_chunk(
                 accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
                 accumulated_usage["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
                 accumulated_usage["prompt_cache_miss_tokens"] = usage.get("prompt_cache_miss_tokens", 0)
+                if usage.get("cost") is not None:
+                    accumulated_usage["cost"] = usage.get("cost")
             # 正文 delta：仅当 choices 非空时提取
             choices = data.get("choices")
             if choices:
@@ -924,7 +926,7 @@ async def chat_completions(
             accumulated_chunks: list[bytes] = []
             accumulated_content: list[str] = []  # 收集 delta.content
             accumulated_reasoning: list[str] = []  # 收集思维链 delta.reasoning_content / delta.reasoning
-            accumulated_usage: dict[str, int] = {}  # 收集 usage（prompt/completion/total_tokens）
+            accumulated_usage: dict[str, Any] = {}  # 收集 usage（token / 上游 cost）
             try:
                 client = httpx.AsyncClient(timeout=stream_timeout)
                 resp = await client.send(
@@ -1019,6 +1021,10 @@ async def chat_completions(
                             db, user_id, model_name, llm_purpose,
                             is_stream=True, usage=accumulated_usage,
                             feature_code=feature_code,
+                            input_price_per_1m=selected.input_price_per_1m,
+                            output_price_per_1m=selected.output_price_per_1m,
+                            price_currency=selected.price_currency or "USD",
+                            provider_cost=accumulated_usage.get("cost"),
                         )
                     except Exception as e:
                         logger.warning("记录流式 token 用量失败: user_id=%s error=%s", user_id, e)
@@ -1069,6 +1075,7 @@ async def chat_completions(
             # 记录 token 用量（非关键路径，失败不影响响应）
             try:
                 usage = (data or {}).get("usage") or {}
+                provider_cost = usage.get("cost") if isinstance(usage, dict) else None
                 if usage and "prompt_tokens" not in usage and "input_tokens" in usage:
                     # Anthropic 原生 usage 字段名 → OpenAI 口径（ofox /v1/messages 非流式）。
                     # input_tokens 不含缓存部分，同流式口径（见 _ingest_anthropic_sse_data）并入 prompt
@@ -1086,6 +1093,10 @@ async def chat_completions(
                     db, user_id, model_name, llm_purpose,
                     is_stream=False, usage=usage,
                     feature_code=feature_code,
+                    input_price_per_1m=selected.input_price_per_1m,
+                    output_price_per_1m=selected.output_price_per_1m,
+                    price_currency=selected.price_currency or "USD",
+                    provider_cost=provider_cost,
                 )
             except Exception as e:
                 logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", user_id, e)

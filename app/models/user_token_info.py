@@ -1,5 +1,5 @@
 """用户 Token 消耗记录表（每次 LLM 调用一行明细）"""
-from sqlalchemy import Column, String, Integer, Date, TIMESTAMP, func
+from sqlalchemy import Column, String, Integer, Date, Numeric, TIMESTAMP, func
 from app.config.database import Base
 
 
@@ -17,5 +17,8 @@ class UserTokenInfo(Base):
     total_tokens = Column(Integer, nullable=False, server_default="0", comment="总token")
     prompt_cache_hit_tokens = Column(Integer, nullable=False, server_default="0", comment="缓存命中token")
     prompt_cache_miss_tokens = Column(Integer, nullable=False, server_default="0", comment="缓存未命中token")
+    estimated_cost = Column(Numeric(18, 8), nullable=True, comment="本次调用成本（估算或上游返回）")
+    cost_currency = Column(String(8), nullable=True, comment="成本币种")
+    cost_source = Column(String(16), nullable=True, comment="成本来源：estimate/provider")
     record_date = Column(Date, nullable=False, comment="记录日期（按天聚合用）")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), comment="创建时间")

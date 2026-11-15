@@ -674,13 +674,14 @@
                                 <th>流式</th>
                                 <th>集群</th>
                                 <th>大模型参数</th>
+                                <th>单价</th>
                                 <th>提供商参数</th>
                                 <th>备注</th>
                                 <th style="text-align:right">操作</th>
                             </tr>
                             </thead>
                             <tbody id="modelBody">
-                            <tr><td colspan="11"><div class="empty">加载中...</div></td></tr>
+                            <tr><td colspan="12"><div class="empty">加载中...</div></td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -795,6 +796,8 @@
                             <code>max_tokens</code> 时，服务端会覆盖请求体同名参数；留空则沿用客户端值。</p>
                         <p><code>temperature</code> 与 <code>top_p</code> 互斥，只能配置一个；<code>top_k</code>
                             仅部分厂商支持。o 系列跳过采样参数，Claude 开启思考时固定 temperature=1。</p>
+                        <p>模型配置输入/输出单价后，「用量明细」会显示估算成本（USD / 1M tokens）。
+                            OpenRouter 返回 <code>usage.cost</code> 时按实际扣费记录，其余厂商为估算值。</p>
                     </div>
 
                     <div class="doc-grid">
@@ -1018,6 +1021,22 @@ print(resp.json())</pre>
                         </div>
                     </div>
                     <span class="hint">留空表示沿用客户端请求参数；temperature 与 top_p 只能填写一个。</span>
+                </div>
+                <div class="field full">
+                    <label>计费单价（可选）</label>
+                    <div class="param-panel">
+                        <div class="param-grid">
+                            <div class="param-item">
+                                <div class="param-name">输入单价 <span class="param-range">USD / 1M tokens</span></div>
+                                <input class="input" id="mInputPrice" type="number" step="0.000001" min="0" placeholder="不计算成本">
+                            </div>
+                            <div class="param-item">
+                                <div class="param-name">输出单价 <span class="param-range">USD / 1M tokens</span></div>
+                                <input class="input" id="mOutputPrice" type="number" step="0.000001" min="0" placeholder="不计算成本">
+                            </div>
+                        </div>
+                    </div>
+                    <span class="hint">用于用量页估算成本；留空表示不统计。成本为估算值，实际账单以厂商为准。</span>
                 </div>
                 <div class="field">
                     <label>额外配置 (JSON)</label>
@@ -1397,8 +1416,11 @@ function renderUsage(summary, daily, byModel, grouped, groupBy) {
     document.getElementById('statCallsSub').textContent =
         '日均 ' + fmt(summary.days ? Math.round(summary.calls / summary.days) : 0) + ' 次 · 近 ' + (summary.days || _usageDays) + ' 天';
     document.getElementById('statTokens').textContent = fmt(summary.totalTokens);
-    document.getElementById('statTokensSub').textContent =
-        '输入 ' + fmtCompact(summary.promptTokens) + ' · 输出 ' + fmtCompact(summary.completionTokens);
+    let tokensSub = '输入 ' + fmtCompact(summary.promptTokens) + ' · 输出 ' + fmtCompact(summary.completionTokens);
+    if (summary.cost !== null && summary.cost !== undefined) {
+        tokensSub += ' · 估算 ' + fmtCost(summary.cost);
+    }
+    document.getElementById('statTokensSub').textContent = tokensSub;
     document.getElementById('statPrompt').textContent = fmt(summary.promptTokens);
     document.getElementById('statCacheSub').textContent = '缓存命中 ' + fmt(summary.cacheHitTokens);
     document.getElementById('statUsers').textContent = fmt(summary.users);
@@ -1413,6 +1435,13 @@ function renderUsage(summary, daily, byModel, grouped, groupBy) {
 const USAGE_DIM_LABELS = { feature_code: '功能码', model: '模型', user_id: '用户' };
 const USAGE_DIM_KEYS = { feature_code: 'featureCode', model: 'model', user_id: 'userId' };
 
+function fmtCost(v) {
+    if (v === null || v === undefined) return '-';
+    const n = Number(v);
+    if (!isFinite(n)) return '-';
+    return '$' + n.toFixed(n !== 0 && Math.abs(n) < 0.01 ? 6 : 4);
+}
+
 function renderGroupedUsage(grouped, groupBy) {
     const head = document.getElementById('usageGroupHead');
     const body = document.getElementById('usageGroupBody');
@@ -1421,10 +1450,10 @@ function renderGroupedUsage(grouped, groupBy) {
 
     head.innerHTML = '<tr>' +
         dims.map(d => `<th>${USAGE_DIM_LABELS[d] || esc(d)}</th>`).join('') +
-        '<th>调用次数</th><th>输入 Token</th><th>输出 Token</th><th>总 Token</th><th>占比</th></tr>';
+        '<th>调用次数</th><th>输入 Token</th><th>输出 Token</th><th>总 Token</th><th>估算成本</th><th>占比</th></tr>';
 
     if (!grouped.length) {
-        body.innerHTML = `<tr><td colspan="${dims.length + 5}"><div class="empty">暂无数据</div></td></tr>`;
+        body.innerHTML = `<tr><td colspan="${dims.length + 6}"><div class="empty">暂无数据</div></td></tr>`;
         return;
     }
 
@@ -1441,6 +1470,7 @@ function renderGroupedUsage(grouped, groupBy) {
                 <td class="num">${fmt(r.promptTokens)}</td>
                 <td class="num">${fmt(r.completionTokens)}</td>
                 <td class="num">${fmt(r.totalTokens)}</td>
+                <td class="num">${fmtCost(r.cost)}</td>
                 <td class="num">${share}%</td>
             </tr>`;
     }).join('');
@@ -1846,7 +1876,7 @@ async function deleteProvider(providerId, name) {
 async function loadModels() {
     if (_providers === null) await preloadProviders();
     const tbody = document.getElementById('modelBody');
-    tbody.innerHTML = '<tr><td colspan="11"><div class="empty">加载中...</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12"><div class="empty">加载中...</div></td></tr>';
 
     const params = new URLSearchParams();
     const name = document.getElementById('filterModelName').value.trim();
@@ -1865,7 +1895,7 @@ async function loadModels() {
         renderModels(result?.data?.list || []);
         _loaded.models = true;
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="11"><div class="empty">加载失败</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12"><div class="empty">加载失败</div></td></tr>';
     }
 }
 
@@ -1877,7 +1907,7 @@ function providerNameOf(m) {
 function renderModels(list) {
     const tbody = document.getElementById('modelBody');
     if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="11"><div class="empty">暂无模型，请点击「新增模型」添加</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12"><div class="empty">暂无模型，请点击「新增模型」添加</div></td></tr>';
         return;
     }
     tbody.innerHTML = list.map(m => {
@@ -1900,6 +1930,7 @@ function renderModels(list) {
             <td>${m.isStream === '1' ? '<span class="tag tag-green">是</span>' : '<span class="tag tag-gray">否</span>'}</td>
             <td>${clusterTag(m.asyncType)}</td>
             <td>${paramTags(m)}</td>
+            <td>${priceTag(m)}</td>
             <td>${providerTag(m.extraConfig)}</td>
             <td><span class="ellipsis muted" title="${esc(m.remarks)}">${esc(m.remarks || '-')}</span></td>
             <td>
@@ -1935,6 +1966,16 @@ function paramTags(m) {
     return items.map(([short, full, value]) =>
         `<span class="tag tag-blue" title="${full} = ${esc(value)}">${short} ${esc(value)}</span>`
     ).join(' ');
+}
+
+function priceTag(m) {
+    const inp = m.inputPricePer1m;
+    const out = m.outputPricePer1m;
+    if (inp === null || inp === undefined) {
+        if (out === null || out === undefined) return '<span class="tag tag-gray">未配置</span>';
+    }
+    const f = v => (v === null || v === undefined) ? '-' : Number(v);
+    return `<span class="tag tag-blue" title="输入 / 输出（USD / 1M tokens）">${f(inp)} / ${f(out)}</span>`;
 }
 
 function thinkTag(v) {
@@ -2030,6 +2071,8 @@ async function openModelModal(modelId) {
         document.getElementById('mTopP').value = hasValue(model.topP);
         document.getElementById('mTopK').value = hasValue(model.topK);
         document.getElementById('mMaxTokens').value = hasValue(model.maxTokens);
+        document.getElementById('mInputPrice').value = hasValue(model.inputPricePer1m);
+        document.getElementById('mOutputPrice').value = hasValue(model.outputPricePer1m);
         syncSamplingConflict();
         document.getElementById('mExtraConfig').value = model.extraConfig || '';
         document.getElementById('mProviderConfig').value = providerConfigFromExtra(model.extraConfig);
@@ -2073,6 +2116,8 @@ function clearModelForm() {
     document.getElementById('mTopP').value = '';
     document.getElementById('mTopK').value = '';
     document.getElementById('mMaxTokens').value = '';
+    document.getElementById('mInputPrice').value = '';
+    document.getElementById('mOutputPrice').value = '';
     syncSamplingConflict();
     document.getElementById('mExtraConfig').value = '';
     document.getElementById('mProviderConfig').value = '';
@@ -2287,6 +2332,8 @@ async function submitModel() {
     const topPRaw = document.getElementById('mTopP').value.trim();
     const topKRaw = document.getElementById('mTopK').value.trim();
     const maxTokensRaw = document.getElementById('mMaxTokens').value.trim();
+    const inputPriceRaw = document.getElementById('mInputPrice').value.trim();
+    const outputPriceRaw = document.getElementById('mOutputPrice').value.trim();
 
     if (!modelName) { toast('请填写模型名称', false); return; }
     if (!editId && !providerId) { toast('请选择大模型提供商', false); return; }
@@ -2305,6 +2352,12 @@ async function submitModel() {
     if (maxTokensRaw && (isNaN(parseInt(maxTokensRaw, 10)) || parseInt(maxTokensRaw, 10) < 1)) {
         toast('max_tokens 需为正整数', false); return;
     }
+    if (inputPriceRaw && (isNaN(parseFloat(inputPriceRaw)) || parseFloat(inputPriceRaw) < 0)) {
+        toast('输入单价需为不小于 0 的数字', false); return;
+    }
+    if (outputPriceRaw && (isNaN(parseFloat(outputPriceRaw)) || parseFloat(outputPriceRaw) < 0)) {
+        toast('输出单价需为不小于 0 的数字', false); return;
+    }
 
     let extraConfig;
     try { extraConfig = buildExtraConfig(); } catch (e) { return; }
@@ -2320,6 +2373,8 @@ async function submitModel() {
         top_p: topPRaw ? parseFloat(topPRaw) : null,
         top_k: topKRaw ? parseInt(topKRaw, 10) : null,
         max_tokens: maxTokensRaw ? parseInt(maxTokensRaw, 10) : null,
+        input_price_per_1m: inputPriceRaw ? parseFloat(inputPriceRaw) : null,
+        output_price_per_1m: outputPriceRaw ? parseFloat(outputPriceRaw) : null,
         extra_config: extraConfig,
         remarks: document.getElementById('mRemarks').value.trim() || null
     };
