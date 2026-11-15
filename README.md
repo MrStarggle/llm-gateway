@@ -65,22 +65,65 @@ uvicorn main:app --host 0.0.0.0 --port 9010
 | `DATABASE_URL` | 显式 SQLAlchemy 异步连接串，优先级最高 | 空 |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接（`DB_BACKEND=mysql` 时使用） | localhost / 3306 / root / 空 / `llm_gateway` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号（明文保存在 env，单管理员） | `admin` / `admin` |
-| `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | `dev-only-change-me` |
+| `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | 代码默认 `dev-only-change-me`；示例文件里是占位符 |
 | `PORT` | 服务端口 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时输出请求体调试日志 | `0` |
 | `CORS_ORIGINS` | 跨域管理台来源，逗号分隔 | 空（同源即可） |
 
+### 管理员账号
+
+开源版没有用户表，只有一组环境变量管理员账号：
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+JWT_SECRET_KEY=change-me-to-a-long-random-string
+```
+
+- 改账号/密码：修改 `.env` 后**重启服务**，已签发的 JWT 在过期前仍然有效（默认 7 天）
+- 改 `JWT_SECRET_KEY`：所有已签发 token 立即失效
+- 没有注册、找回密码、多用户；需要这些能力就按「接入自有用户体系」替换鉴权层
+- 默认 `admin / admin` 仅适合本机；对局域网或公网开放前必须修改
+
+### SQLite 数据与备份
+
+默认数据库是单文件 `data/gateway.db`，首次启动自动创建。
+
+```bash
+# 停止服务后直接复制即可
+cp data/gateway.db data/gateway.db.bak
+```
+
+WAL 模式下会同时存在 `gateway.db-wal` / `gateway.db-shm`；运行中需要备份时用：
+
+```bash
+sqlite3 data/gateway.db ".backup 'data/gateway.db.bak'"
+```
+
+Docker 部署时数据在 `gateway_data` 卷里，不要删除该卷。
+
 ### 切换到 MySQL
+
+先在 MySQL 中建库（表由程序启动时自动创建）：
+
+```sql
+CREATE DATABASE IF NOT EXISTS llm_gateway
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+然后在 `.env` 中配置：
 
 ```bash
 DB_BACKEND=mysql
 MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=your-password
 MYSQL_DATABASE=llm_gateway
 ```
 
 MySQL 模式会在启动时执行 `app/db/schema.sql` 与幂等迁移。
+SQLite 和 MySQL 之间没有自动数据迁移；切换前需要自己导出/导入。
 
 ### 安全与部署提示
 
