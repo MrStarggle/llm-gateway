@@ -1,5 +1,5 @@
 """模型管理信息 ORM 模型"""
-from sqlalchemy import Column, Float, Integer, String, Text, TIMESTAMP, func
+from sqlalchemy import Column, DateTime, Float, Integer, Numeric, String, Text, TIMESTAMP, func
 from app.config.database import Base
 
 
@@ -28,6 +28,12 @@ class ModelManageInfo(Base):
     top_p = Column(Float, nullable=True, comment="覆盖请求体top_p；NULL=不覆盖（与temperature互斥）")
     top_k = Column(Integer, nullable=True, comment="覆盖请求体top_k；NULL=不覆盖")
     max_tokens = Column(Integer, nullable=True, comment="覆盖请求体max_tokens；NULL=不覆盖")
+    # 计费单价（每 1M token），用于估算用量成本；NULL 表示不计算
+    input_price_per_1m = Column(Numeric(18, 6), nullable=True, comment="输入单价（每 1M token）")
+    output_price_per_1m = Column(Numeric(18, 6), nullable=True, comment="输出单价（每 1M token）")
+    price_currency = Column(String(8), nullable=False, server_default="USD", comment="价格币种")
+    price_source = Column(String(16), nullable=True, comment="价格来源：manual/provider")
+    price_updated_at = Column(DateTime, nullable=True, comment="价格更新时间")
     extra_config = Column(Text, comment="存储语音模型的音色、语速、音调等JSON配置")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), comment="创建时间")
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
