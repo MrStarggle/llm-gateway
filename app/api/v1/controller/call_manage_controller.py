@@ -6,6 +6,7 @@
 """
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncGenerator, Optional
@@ -24,6 +25,9 @@ from app.utils.response import ResponseFactory
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 完整请求体/响应正文可能包含用户提示词，默认不落日志
+DEBUG = os.getenv("GATEWAY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
 
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
@@ -881,11 +885,12 @@ async def chat_completions(
             "Content-Type": "application/json",
         }
 
-    # 打印最终发往上游 LLM 的请求报文
-    logger.info(
-        "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
-        json.dumps(body, ensure_ascii=False, indent=2),
-    )
+    # 完整请求体含用户提示词，仅在调试模式打印
+    if DEBUG:
+        logger.info(
+            "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
+            json.dumps(body, ensure_ascii=False, indent=2),
+        )
 
     # ── 流式转发 ──
     if is_stream:
@@ -972,11 +977,16 @@ async def chat_completions(
                     )
                 logger.info(
                     "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                    "elapsed=%.0fms total_bytes=%d content_chars=%d reasoning_chars=%d%s\n完整返回内容:\n%s",
-                    model_name, elapsed, total_bytes, len(content_text), len(reasoning_text), usage_info, content_text,
+                    "elapsed=%.0fms total_bytes=%d content_chars=%d reasoning_chars=%d%s",
+                    model_name, elapsed, total_bytes, len(content_text), len(reasoning_text), usage_info,
                 )
-                # 思维链内容单独打印（思考模式才产生，平时为空避免日志噪音）
-                if reasoning_text:
+                # 正文/思维链含模型输出内容，仅在调试模式打印
+                if DEBUG and content_text:
+                    logger.info(
+                        "POST /call-manage/chat/completions <- STREAM 完整返回内容 model=%s:\n%s",
+                        model_name, content_text,
+                    )
+                if DEBUG and reasoning_text:
                     logger.info(
                         "POST /call-manage/chat/completions <- STREAM 思维链 model=%s:\n%s",
                         model_name, reasoning_text,
@@ -1010,9 +1020,13 @@ async def chat_completions(
             elapsed = (time.perf_counter() - t0) * 1000
             resp_text = resp.text
             logger.info(
-                "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d\n完整返回报文:\n%s",
-                resp.status_code, model_name, elapsed, len(resp_text), resp_text,
+                "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d",
+                resp.status_code, model_name, elapsed, len(resp_text),
             )
+            if DEBUG:
+                logger.info(
+                    "POST /call-manage/chat/completions <- 完整返回报文:\n%s", resp_text,
+                )
 
             if resp.status_code >= 400:
                 logger.warning(

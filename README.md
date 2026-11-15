@@ -69,6 +69,13 @@ MYSQL_DATABASE=llm_gateway
 
 MySQL 模式会在启动时执行 `app/db/schema.sql` 与幂等迁移。
 
+### 安全与部署提示
+
+- 公网部署前必须修改 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET_KEY`
+- 建议放在 HTTPS 反向代理（Nginx/Caddy）之后，并在代理层加登录限流
+- SQLite 模式只运行一个进程，不要使用多个 worker 或多个实例共享同一文件
+- 完整请求体和模型响应默认**不写日志**；`GATEWAY_DEBUG=1` 才会打印，其中可能包含用户提示词
+
 ### 接入自有用户体系
 
 开源版默认是单管理员模式：`app/api/v1/controller/auth_controller.py` 用 env 中的
