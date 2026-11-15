@@ -151,6 +151,28 @@ async def run_migrations():
         "ALTER TABLE async_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '请求级思考模式：1强制开/0强制关/NULL跟随客户端（不注入）'",
     ]
     async with engine.begin() as conn:
+        # 恢复 is_base 两池字段：开源版集群迁移会 DROP 该列，切回业务版时需补齐，
+        # 并按集群派生初始值（async1=主模型池，async2..9=异步池）
+        result = await conn.execute(
+            text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'model_manage_info'"
+            ),
+            {"db": MYSQL_DATABASE},
+        )
+        model_columns = {row[0] for row in result.fetchall()}
+        if "is_base" not in model_columns:
+            await conn.execute(text(
+                "ALTER TABLE model_manage_info ADD COLUMN is_base VARCHAR(1) NOT NULL DEFAULT '0' "
+                "COMMENT '基础默认模型：1是0否' AFTER is_stream"
+            ))
+            if "async_type" in model_columns:
+                await conn.execute(text(
+                    "UPDATE model_manage_info SET is_base = "
+                    "CASE WHEN async_type = 'async1' THEN '0' ELSE '1' END"
+                ))
+            print(" 迁移执行成功: 恢复 model_manage_info.is_base 并按 async_type 回填")
+
         for sql in migrations:
             try:
                 await conn.execute(text(sql))
