@@ -81,6 +81,12 @@ async def init_database():
         from app.models.user_daily_quota import UserDailyQuota  # noqa: F401
         from app.models.user_info import UserInfo  # noqa: F401
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
+        # 项目 Token / 配额 / 渠道健康
+        from app.models.project_info import ProjectInfo  # noqa: F401
+        from app.models.project_token_info import ProjectTokenInfo  # noqa: F401
+        from app.models.project_usage_daily import ProjectUsageDaily  # noqa: F401
+        from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401
+        from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
@@ -143,6 +149,27 @@ async def run_migrations():
         "ALTER TABLE model_manage_info ADD COLUMN max_tokens INT NULL COMMENT '覆盖请求体max_tokens；NULL=不覆盖（沿用客户端值）'",
         # 思考模式语义：0跟随请求/1强制开启/2强制关闭
         "ALTER TABLE model_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '思考模式：0跟随请求，1强制开启，2强制关闭'",
+        # 计费单价（每 1M token）与价格来源
+        "ALTER TABLE model_manage_info ADD COLUMN input_price_per_1m DECIMAL(18,6) NULL COMMENT '输入单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN output_price_per_1m DECIMAL(18,6) NULL COMMENT '输出单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '价格币种'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_source VARCHAR(16) NULL COMMENT '价格来源：manual/provider'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_updated_at DATETIME NULL COMMENT '价格更新时间'",
+        # 用量归属与成本快照
+        "ALTER TABLE user_token_info ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized' COMMENT '功能码（用量分组统计用）'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_feature_code (feature_code)",
+        "ALTER TABLE user_token_info ADD COLUMN estimated_cost DECIMAL(18,8) NULL COMMENT '本次调用成本（估算或上游返回）'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_currency VARCHAR(8) NULL COMMENT '成本币种'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_source VARCHAR(16) NULL COMMENT '成本来源：estimate/provider'",
+        "ALTER TABLE user_token_info ADD COLUMN project_id VARCHAR(64) NULL COMMENT '项目ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_project_id (project_id)",
+        "ALTER TABLE user_token_info ADD COLUMN token_id VARCHAR(64) NULL COMMENT '项目Token ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_token_id (token_id)",
+        "ALTER TABLE user_token_info ADD COLUMN channel_id VARCHAR(64) NULL COMMENT '实际服务的模型ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_channel_id (channel_id)",
+        "ALTER TABLE user_token_info ADD COLUMN request_id VARCHAR(64) NULL COMMENT '请求ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_request_id (request_id)",
+        "ALTER TABLE user_token_info ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '网关内部重试次数'",
         # 积分制：积分余额（共享表，列由本系统负责迁移，重复执行自动跳过）
         "ALTER TABLE user_info ADD COLUMN point_balance INT NOT NULL DEFAULT 0 COMMENT '积分余额（余额即会员等级）'",
         # 会员系统：到期时间 / 订阅ID / 套餐ID（与 StarggleCom 迁移保持一致）

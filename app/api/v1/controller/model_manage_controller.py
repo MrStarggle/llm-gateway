@@ -184,6 +184,7 @@ async def usage_overview(days: int = 7, db: AsyncSession = Depends(get_db)):
 async def list_call_records(
         page: int = 1,
         page_size: int = 20,
+        project_id: str = "",
         user_id: str = "",
         model: str = "",
         purpose: str = "",
@@ -193,7 +194,8 @@ async def list_call_records(
 ):
     """调用记录分页列表"""
     records, total = await usage_manage_service.list_call_records(
-        db, page=page, page_size=page_size, user_id=user_id, model=model,
+        db, page=page, page_size=page_size, project_id=project_id,
+        user_id=user_id, model=model,
         purpose=purpose, start_date=start_date, end_date=end_date,
     )
     return ResponseFactory.ok(data={"list": records, "total": total}, message="查询成功")

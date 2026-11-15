@@ -4,23 +4,26 @@
 - POST /chat/completions — 转发聊天补全请求（支持流式/非流式）
 - POST /models — 从上游 API 获取可用模型列表
 """
+import copy
 import json
 import logging
 import os
 import re
 import time
+import uuid
 from typing import Any, AsyncGenerator, Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.config.membership import get_tier
-from app.services import call_manage_service
+from app.services import call_manage_service, health_manage_service, project_manage_service
+from app.utils.gateway_error import gateway_error_response
 from app.utils.response import ResponseFactory
 from propmt import (
     ai_sec_propmt,
@@ -40,8 +43,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 完整请求体/响应正文可能包含用户提示词，默认不落日志
+DEBUG = os.getenv("GATEWAY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
+
+# ── 功能码：仅用于用量分组统计，非法值回落 uncategorized ──
+_DEFAULT_FEATURE_CODE = "uncategorized"
+_FEATURE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 
 # ── o 系列模型（上游不支持 response_format / 非默认 temperature）──
 _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
@@ -78,7 +88,7 @@ _MINIMAX_EFFORT_MIN_VER = (3, 1)
 _MINIMAX_FORCED_THINKING_MIN_VER = (3, 1)
 
 
-# ── systemPropmt 占位符替换 ──
+# ── systemPropmt 占位符替换（业务版提示词注入）──
 _PROMPT_MARKERS = (
     "<core_list>",
     "<core_propmt>",
@@ -93,7 +103,6 @@ _PROMPT_MARKERS = (
     "<core_propmt_deepseek>",
     "</role_core_propmt>",
 )
-# 占位符对应的提示词内容（静态，进程内只构建一次）
 _PROMPT_REPLACEMENTS = {
     "<core_list>": core_list,
     "<core_propmt>": core_propmt_one,
@@ -207,6 +216,247 @@ def _validate_model_name(name: str) -> str:
     if ".." in name:
         raise HTTPException(status_code=400, detail="非法 model 名称")
     return name
+
+
+def _normalize_feature_code(raw: Optional[str]) -> str:
+    """规范化功能码：小写、限长 64；非法值回落 uncategorized."""
+    code = (raw or "").strip().lower()
+    if not code:
+        return _DEFAULT_FEATURE_CODE
+    if not _FEATURE_CODE_RE.match(code):
+        logger.warning("忽略非法 X-Feature-Code=%r，按 uncategorized 统计", raw)
+        return _DEFAULT_FEATURE_CODE
+    return code
+
+
+def _extract_bearer(authorization: Optional[str]) -> str:
+    """从 Authorization 头取出 Bearer 值（大小写不敏感）."""
+    value = (authorization or "").strip()
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return value
+
+
+def _counts_as_channel_failure(status_code: int) -> bool:
+    """只有渠道自身问题才计入健康失败；400/422 等客户端错误不计."""
+    return status_code in (401, 403, 408, 409, 425, 429) or status_code >= 500
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    """可换渠道重试的上游状态码；400/404/422 是请求或模型本身问题，不重试."""
+    return _counts_as_channel_failure(status_code)
+
+
+def _prepare_forward_plan(
+        original_body: dict,
+        selected,
+        *,
+        is_async: bool,
+        identity,
+        raw_token: str,
+        response_format_header: Optional[str],
+        thinking_header: Optional[str],
+        request_id: str = "",
+) -> dict:
+    """为一次上游尝试构造独立请求体 / URL / 请求头.
+
+    每次重试都从 original_body 深拷贝，避免上一次尝试注入的模型参数污染下一次。
+    """
+    # ── 校验并构造转发 URL ──
+    raw_url = selected.com_url.rstrip("/")
+    # 兼容 DB 里存 https://openrouter.ai 或 https://openrouter.ai/api/v1 的情况
+    # Anthropic 原生协议（ofox 等：POST /anthropic/v1/messages）不走 /chat/completions：
+    #   · DB 存完整端点 …/v1/messages → 原样使用
+    #   · DB 存 …/anthropic 基址 → 补 /v1/messages
+    if raw_url.endswith("/chat/completions"):
+        forward_url = raw_url
+    elif raw_url.endswith("/messages"):
+        forward_url = raw_url
+    elif raw_url.endswith("/anthropic"):
+        forward_url = f"{raw_url}/v1/messages"
+    else:
+        forward_url = f"{raw_url}/chat/completions"
+    _validate_url(forward_url)
+    is_anthropic_native = _is_anthropic_native_url(forward_url)
+
+    body = copy.deepcopy(original_body)
+
+    # Anthropic 原生端点：messages 里的 role:"system" 提为顶层 system 字段
+    if is_anthropic_native:
+        _apply_anthropic_native_body(body)
+
+    # ── 确定 API Key ──
+    # 网关 Token 永远不转发给上游；异步链与项目 Token 强制使用 DB 配置的 Key。
+    if is_async or identity is not None:
+        api_key = selected.api_key
+    else:
+        client_key = raw_token if raw_token else ""
+        api_key = client_key if client_key else selected.api_key
+        if not api_key:
+            raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
+
+    # ── response_format 注入 ──
+    if response_format_header == "json_object":
+        model_name_lower = selected.ai_model_name.lower()
+        is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
+        if is_anthropic_native:
+            logger.info(
+                "POST /call-manage/chat/completions -> Anthropic 原生端点不支持 response_format，跳过注入 model=%s",
+                selected.ai_model_name,
+            )
+        elif not is_o_series:
+            body["response_format"] = {"type": "json_object"}
+        else:
+            logger.info(
+                "POST /call-manage/chat/completions -> model=%s 不支持 response_format，跳过注入",
+                selected.ai_model_name,
+            )
+
+    client_model = body.get("model", "")
+    logger.info(
+        "POST /call-manage/chat/completions -> 客户端传入 model=%r, selected.ai_model_name=%r",
+        client_model, selected.ai_model_name,
+    )
+    model_name = client_model.strip()
+    if not model_name:
+        model_name = selected.ai_model_name
+        body["model"] = model_name
+        logger.info(
+            "POST /call-manage/chat/completions -> 客户端未传 model，使用数据库配置: %r",
+            model_name,
+        )
+    else:
+        model_name = _validate_model_name(model_name)
+        logger.info(
+            "POST /call-manage/chat/completions -> 使用客户端传入 model: %r",
+            model_name,
+        )
+
+    # ── 思考模式开关判定 ──
+    think_enabled: Optional[bool] = None
+    model_think_mode = selected.is_think or "0"
+    if model_think_mode == "1":
+        think_enabled = True
+    elif model_think_mode == "2":
+        think_enabled = False
+    elif thinking_header is not None:
+        think_enabled = thinking_header.strip().lower() in ("1", "true", "yes", "on", "enabled")
+        logger.info(
+            "POST /call-manage/chat/completions -> X-Thinking=%r enabled=%s model=%s",
+            thinking_header, think_enabled, model_name,
+        )
+    if model_think_mode in ("1", "2"):
+        logger.info(
+            "POST /call-manage/chat/completions -> 模型思考模式=%s 生效 enabled=%s model=%s",
+            model_think_mode, think_enabled, model_name,
+        )
+
+    # ── 模型级参数覆盖 ──
+    model_name_lower = model_name.lower()
+    is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
+    is_claude = "claude" in model_name_lower
+    body_thinking = body.get("thinking")
+    client_think_on = (
+        (isinstance(body_thinking, dict) and body_thinking.get("type") == "enabled")
+        or body.get("reasoning_effort") is not None
+    )
+    think_on = think_enabled is True or (think_enabled is None and client_think_on)
+    if selected.temperature is not None and selected.top_p is not None:
+        logger.warning(
+            "模型同时配置 temperature 与 top_p，按 temperature 生效: model=%s", model_name,
+        )
+    sampling_blocked = is_o_series or (is_claude and think_on)
+    if not sampling_blocked:
+        if selected.temperature is not None:
+            body["temperature"] = selected.temperature
+        elif selected.top_p is not None:
+            body["top_p"] = selected.top_p
+        if selected.top_k is not None:
+            body["top_k"] = selected.top_k
+    if selected.max_tokens is not None:
+        body["max_tokens"] = selected.max_tokens
+    if any(v is not None for v in (selected.temperature, selected.top_p, selected.top_k, selected.max_tokens)):
+        logger.info(
+            "POST /call-manage/chat/completions -> 模型级参数覆盖: model=%r temperature=%r top_p=%r top_k=%r max_tokens=%r",
+            model_name, body.get("temperature"), body.get("top_p"), body.get("top_k"), body.get("max_tokens"),
+        )
+
+    # ── Anthropic 原生端点：max_tokens 必填 ──
+    body_max_tokens = body.get("max_tokens")
+    if is_anthropic_native and (not isinstance(body_max_tokens, int) or isinstance(body_max_tokens, bool)):
+        body["max_tokens"] = _ANTHROPIC_DEFAULT_MAX_TOKENS
+        logger.info(
+            "POST /call-manage/chat/completions -> Anthropic 原生端点缺 max_tokens，注入默认 %d model=%s",
+            _ANTHROPIC_DEFAULT_MAX_TOKENS, model_name,
+        )
+
+    # ── 思考参数注入 ──
+    if think_enabled is not None:
+        _apply_thinking_params(body, model_name, selected.com_url, think_enabled)
+    elif _glm_forced_thinking(model_name):
+        _apply_thinking_params(body, model_name, selected.com_url, False)
+
+    # ── Claude 思考模式预算收敛 ──
+    if "claude" in model_name.lower():
+        thinking = body.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+            max_tokens = body.get("max_tokens")
+            if isinstance(max_tokens, int) and max_tokens <= _CLAUDE_THINKING_BUDGET:
+                budget = max_tokens - 1024
+                if budget >= 1024:
+                    thinking["budget_tokens"] = budget
+                    logger.info(
+                        "POST /call-manage/chat/completions -> Claude 思考 budget 收敛为 %d（max_tokens=%s）",
+                        budget, max_tokens,
+                    )
+                else:
+                    thinking["type"] = "disabled"
+                    logger.warning(
+                        "POST /call-manage/chat/completions -> max_tokens=%s 不足以容纳 Claude 思考最低预算(1024)，已关闭思考",
+                        max_tokens,
+                    )
+
+    # 提供商路由参数注入（OpenRouter）
+    _apply_provider_params(body, selected)
+
+    # Gemini 安全阈值注入
+    _apply_gemini_safety(body, model_name)
+
+    is_stream = body.get("stream", False)
+
+    logger.info(
+        "POST /call-manage/chat/completions -> [%s] model=%s stream=%s "
+        "selected=%s(%s) url=%s body_model=%r",
+        request_id, model_name, is_stream, selected.ai_model_name, selected.com_name,
+        forward_url, body.get("model"),
+    )
+
+    if is_anthropic_native:
+        fwd_headers = {
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+    else:
+        fwd_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    if DEBUG:
+        logger.info(
+            "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
+            json.dumps(body, ensure_ascii=False, indent=2),
+        )
+
+    return {
+        "body": body,
+        "forward_url": forward_url,
+        "fwd_headers": fwd_headers,
+        "model_name": model_name,
+        "is_stream": is_stream,
+        "is_anthropic_native": is_anthropic_native,
+    }
 
 
 def _validate_url(url: str) -> str:
@@ -487,7 +737,7 @@ def _ingest_sse_chunk(
     buf: bytes,
     accumulated_content: list[str],
     accumulated_reasoning: list[str],
-    accumulated_usage: dict[str, int],
+    accumulated_usage: dict[str, Any],
     flush: bool = False,
 ) -> bytes:
     """消费 ``buf`` 里的**完整** SSE 行并累加，返回残余的半行（留给下次拼接）。
@@ -532,6 +782,8 @@ def _ingest_sse_chunk(
                 accumulated_usage["total_tokens"] = usage.get("total_tokens", 0)
                 accumulated_usage["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
                 accumulated_usage["prompt_cache_miss_tokens"] = usage.get("prompt_cache_miss_tokens", 0)
+                if usage.get("cost") is not None:
+                    accumulated_usage["cost"] = usage.get("cost")
             # 正文 delta：仅当 choices 非空时提取
             choices = data.get("choices")
             if choices:
@@ -660,6 +912,7 @@ class FetchModelsBody(BaseModel):
 @router.post("/chat/completions")
 async def chat_completions(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     authorization: Optional[str] = Header(None),
     x_async_type: Optional[str] = Header(None, alias="X-Async-Type"),
@@ -667,6 +920,7 @@ async def chat_completions(
     x_response_format: Optional[str] = Header(None, alias="X-Response-Format"),
     x_thinking: Optional[str] = Header(None, alias="X-Thinking"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_feature_code: Optional[str] = Header(None, alias="X-Feature-Code"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
@@ -675,26 +929,63 @@ async def chat_completions(
         X-Async-Type: 集群类型 "async1".."async9"（对应管理页集群1..集群9），
                       服务端在该集群内按轮询选择模型。缺省兼容回落：
                       主链 "async1"、异步链 "async2".
-        X-Purpose: "main"（默认）或 "async1".."async13"。
-                   仅用于异步识别、日志与 token 用量记账，不再覆盖模型或请求参数。
+        X-Purpose: 用途标识，默认 "main"；以 "async" 开头时按异步链处理
+                   （强制使用服务端 API Key）。仅用于异步识别、日志与 token 用量记账，
+                   不影响集群选择。
         X-Thinking: 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
                     仅在模型「思考模式」为跟随请求时生效；模型配置为强制开/关时以模型为准.
         X-Response-Format: "json_object" 时按实际模型注入 response_format.
         X-User-Id: 调用方标识，用于 token 用量与调用记录统计；缺省视为匿名.
+        X-Feature-Code: 功能码（如 role_reply），仅用于用量分组统计；
+                        不传或非法时记为 uncategorized.
 
     请求体: 标准 OpenAI chat completions 格式。模型配置了 temperature / top_p / top_k /
             max_tokens 时服务端会覆盖同名请求参数，未配置（NULL）则保留客户端值.
     """
     t0 = time.perf_counter()
+    request_id = getattr(request.state, "request_id", "") or uuid.uuid4().hex
     purpose_header = x_purpose
     async_type_header = x_async_type
     response_format_header = x_response_format
     thinking_header = x_thinking
-    user_id = x_user_id
+    user_id = (x_user_id or "").strip()
+    feature_code = _normalize_feature_code(x_feature_code)
+
+    # ── 网关 Token / 项目配额 ──
+    # sk-gw- 前缀一律按网关 Token 校验；即使未强制开启，非法 Token 也不能回落成上游 Key。
+    raw_token = _extract_bearer(authorization)
+    identity = None
+    project = None
+    project_id = ""
+    token_id = ""
+    if raw_token.startswith(project_manage_service.TOKEN_PREFIX):
+        try:
+            identity = await project_manage_service.resolve_gateway_token(db, raw_token)
+        except project_manage_service.GatewayAuthError as e:
+            logger.warning("[%s] 网关 Token 校验失败: %s", request_id, e.code)
+            return gateway_error_response(e.status_code, e.message, code=e.code)
+
+        project = identity.project
+        project_id = project.project_id
+        token_id = identity.token_id
+        if not user_id:
+            user_id = f"gw:{token_id}"
+        try:
+            snapshot = await project_manage_service.get_usage_snapshot(db, project_id)
+            project_manage_service.check_project_quota(project, snapshot)
+        except project_manage_service.ProjectQuotaError as e:
+            logger.warning(
+                "[%s] 项目配额超限: project=%s code=%s", request_id, project_id, e.code,
+            )
+            return gateway_error_response(
+                429, e.message, error_type="rate_limit_error", code=e.code,
+            )
+    elif project_manage_service.GATEWAY_TOKEN_REQUIRED:
+        return gateway_error_response(401, "Missing API key", code="missing_api_key")
 
     llm_purpose = purpose_header or "main"
-    # 任何 async* 都按异步计（含 async1..13 与未知 async99 等），
-    # 防止未知 purpose 串到主模型路由使用客户端 Authorization key
+    # 任何以 async 开头的 purpose 都按异步计（如 async、async:summary 等），
+    # 防止自定义 purpose 串到主模型路由使用客户端 Authorization key
     is_async = llm_purpose.startswith("async")
 
     # ── 集群类型：请求头是模型池的唯一选择依据 ──
@@ -712,11 +1003,12 @@ async def chat_completions(
             llm_purpose, async_type,
         )
 
-    # ── 会员日限额校验（携带 X-User-Id 的用户才校验） ──
-    # 匿名调用（无用户ID）不校验，保持转发原样。
-    # 开关：STARGGLE_ENFORCE_QUOTA=0 关闭（本地调试/压测用）。
-    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in ("1", "true", "yes", "on")
-    if enforce_quota and user_id:
+    # ── 会员日限额校验（仅非项目 Token 且携带 X-User-Id 的请求） ──
+    # 匿名调用不校验；项目 Token 走项目级配额，避免叠加会员限额。
+    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    if identity is None and enforce_quota and user_id:
         level = await call_manage_service.get_effective_membership(db, user_id)
         daily_limit = get_tier(level).get("dailyLimit", 0)
         if daily_limit > 0:
@@ -737,8 +1029,41 @@ async def chat_completions(
                     },
                 )
 
+    # ── 解析原始请求体（每次重试都从这份 body 深拷贝）──
+    try:
+        original_body = await request.json()
+    except Exception:
+        return gateway_error_response(400, "Invalid JSON body", code="invalid_json")
+    if not isinstance(original_body, dict):
+        return gateway_error_response(400, "Request body must be a JSON object", code="invalid_json")
+    requested_stream = bool(original_body.get("stream", False))
+    client_model_preview = str(original_body.get("model") or "").strip()
+
     # ── 从数据库获取所选集群的可用模型并轮询 ──
     models = await call_manage_service.get_active_models(db, async_type=async_type)
+    if identity is not None and client_model_preview:
+        # 客户端显式指定模型时按该名称校验；候选渠道仍需保留，便于同集群重试
+        if not project_manage_service.model_allowed(identity, client_model_preview):
+            logger.warning(
+                "[%s] Token 不允许使用模型: token=%s model=%s",
+                request_id, token_id, client_model_preview,
+            )
+            return gateway_error_response(
+                403, f"API key is not allowed to use model {client_model_preview}",
+                code="model_not_allowed",
+            )
+    elif identity is not None:
+        models = project_manage_service.filter_allowed_models(identity, models)
+        if not models:
+            logger.warning(
+                "[%s] Token 不允许使用集群 %s 中的任何模型: token=%s",
+                request_id, async_type, token_id,
+            )
+            return gateway_error_response(
+                403,
+                f"API key is not allowed to use any model in cluster {async_type}",
+                code="model_not_allowed",
+            )
     if not models:
         logger.error("集群 %s 没有可用的 %s 模型（is_using=1）", async_type, llm_purpose)
         raise HTTPException(
@@ -746,405 +1071,386 @@ async def chat_completions(
             detail=f"集群 {async_type} 没有可用的 LLM 模型，请检查 model_manage_info 表配置",
         )
 
-    selected = await call_manage_service.next_model(models, async_type)
+    candidates = await health_manage_service.plan_candidates(db, models, async_type)
+    if not candidates:
+        candidates = [models[0]]
+    selected = candidates[0]
+    routing_config = await health_manage_service.get_routing_config(db, async_type)
 
     logger.info(
-        "POST /call-manage/chat/completions -> 选中模型详情: cluster=%s ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s",
-        async_type, selected.ai_model_id, selected.ai_model_name, selected.com_name,
-        selected.com_url,
+        "POST /call-manage/chat/completions -> 选中模型详情: cluster=%s strategy=%s "
+        "ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s",
+        async_type, routing_config.strategy, selected.ai_model_id, selected.ai_model_name,
+        selected.com_name, selected.com_url,
     )
 
-    # ── 校验并构造转发 URL ──
-    raw_url = selected.com_url.rstrip("/")
-    # 兼容 DB 里存 https://openrouter.ai 或 https://openrouter.ai/api/v1 的情况
-    # Anthropic 原生协议（ofox 等：POST /anthropic/v1/messages）不走 /chat/completions：
-    #   · DB 存完整端点 …/v1/messages → 原样使用
-    #   · DB 存 …/anthropic 基址 → 补 /v1/messages
-    if raw_url.endswith("/chat/completions"):
-        forward_url = raw_url
-    elif raw_url.endswith("/messages"):
-        forward_url = raw_url
-    elif raw_url.endswith("/anthropic"):
-        forward_url = f"{raw_url}/v1/messages"
-    else:
-        forward_url = f"{raw_url}/chat/completions"
-    _validate_url(forward_url)
-    # 原生端点判定只算一次，本方法内三处（response_format / max_tokens 兜底 / 认证头）共用
-    is_anthropic_native = _is_anthropic_native_url(forward_url)
+    project_currency = project.cost_currency if project is not None else "USD"
+    token_last_used_at = identity.last_used_at if identity is not None else None
 
-    # ── 解析请求体（须先于下方协议适配，body 在此之前尚未赋值）──
-    body = await request.json()
-    body = _replace_core_prompts(body)
-
-    # ── Anthropic 原生端点：请求体协议适配 ──
-    # messages 里的 role:"system" 提为顶层 system 字段（原生协议无 system 角色，不转换上游 400）
-    if is_anthropic_native:
-        _apply_anthropic_native_body(body)
-
-    # ── 确定 API Key ──
-    # 主 LLM：优先使用客户端提供的 key；异步 LLM：强制使用 DB 配置的 key
-    if is_async:
-        api_key = selected.api_key
-    else:
-        client_key = ""
-        if authorization:
-            client_key = authorization.removeprefix("Bearer ").strip()
-        api_key = client_key if client_key else selected.api_key
-        if not api_key:
-            raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
-
-    # （思考模式注入统一移至下方 model 名解析之后：模型配置优先，跟随请求时按 X-Thinking 头）
-
-    # ── response_format 注入 ──
-    # 客户端通过 X-Response-Format header 声明需要 JSON 输出，
-    # 服务端根据实际模型决定是否/如何注入 response_format。
-    if response_format_header == "json_object":
-        model_name_lower = selected.ai_model_name.lower()
-        is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
-        if is_anthropic_native:
-            # Anthropic 原生协议无 response_format 字段，注入会被上游 400 拒绝
-            logger.info(
-                "POST /call-manage/chat/completions -> Anthropic 原生端点不支持 response_format，跳过注入 model=%s",
-                selected.ai_model_name,
+    # ── 流式转发：先完成重试，再把已建立的上游响应交给 StreamingResponse ──
+    if requested_stream:
+        last_error = "All upstream channels failed"
+        for attempt_index, selected in enumerate(candidates):
+            plan = _prepare_forward_plan(
+                original_body, selected,
+                is_async=is_async, identity=identity, raw_token=raw_token,
+                response_format_header=response_format_header,
+                thinking_header=thinking_header,
+                request_id=request_id,
             )
-        elif not is_o_series:
-            body["response_format"] = {"type": "json_object"}
-        else:
-            logger.info(
-                "POST /call-manage/chat/completions -> model=%s 不支持 response_format，跳过注入",
-                selected.ai_model_name,
-            )
+            plan["body"] = _replace_core_prompts(plan["body"])
+            model_name = plan["model_name"]
+            if identity is not None and not project_manage_service.model_allowed(identity, model_name):
+                logger.warning(
+                    "[%s] Token 不允许使用模型: token=%s model=%s",
+                    request_id, token_id, model_name,
+                )
+                return gateway_error_response(
+                    403, f"API key is not allowed to use model {model_name}",
+                    code="model_not_allowed",
+                )
 
-    client_model = body.get("model", "")
-    logger.info(
-        "POST /call-manage/chat/completions -> 客户端传入 model=%r, selected.ai_model_name=%r",
-        client_model, selected.ai_model_name,
-    )
-    model_name = client_model.strip()
-    # 客户端可不传 model_name（空串），由服务端根据 model_manage_info 选取
-    if not model_name:
-        model_name = selected.ai_model_name
-        body["model"] = model_name
-        logger.info(
-            "POST /call-manage/chat/completions -> 客户端未传 model，使用数据库配置: %r",
-            model_name,
-        )
-    else:
-        model_name = _validate_model_name(model_name)
-        logger.info(
-            "POST /call-manage/chat/completions -> 使用客户端传入 model: %r",
-            model_name,
-        )
-
-    # ── 思考模式开关判定 ──
-    # 模型管理「思考模式」：0 跟随请求 / 1 强制开启 / 2 强制关闭；1、2 优先于请求头。
-    # 跟随请求时：主链可用 X-Thinking 头表达偏好，缺头则不注入，保持请求体原样。
-    think_enabled: Optional[bool] = None
-    model_think_mode = selected.is_think or "0"
-    if model_think_mode == "1":
-        think_enabled = True
-    elif model_think_mode == "2":
-        think_enabled = False
-    elif thinking_header is not None:
-        think_enabled = thinking_header.strip().lower() in ("1", "true", "yes", "on", "enabled")
-        logger.info(
-            "POST /call-manage/chat/completions -> X-Thinking=%r enabled=%s model=%s",
-            thinking_header, think_enabled, model_name,
-        )
-    if model_think_mode in ("1", "2"):
-        logger.info(
-            "POST /call-manage/chat/completions -> 模型思考模式=%s 生效 enabled=%s model=%s",
-            model_think_mode, think_enabled, model_name,
-        )
-
-    # ── 模型级参数覆盖：temperature / top_p / top_k / max_tokens ──
-    # 非 NULL 时覆盖客户端请求体同名参数；NULL 表示沿用客户端值。
-    # temperature 与 top_p 互斥：同时配置时仅 temperature 生效（top_k 独立）。
-    # 覆盖豁免：o 系列不支持 temperature/top_p/top_k；
-    # Claude 思考模式要求 temperature 固定为 1 且不能携带 top_p/top_k。
-    # （Claude 思考与 max_tokens 的预算冲突在下方思考注入后统一收敛，此处无需跳过覆盖）
-    model_name_lower = model_name.lower()
-    is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
-    is_claude = "claude" in model_name_lower
-    # 思考是否（将）开启：强制开=True；跟随客户端（think_enabled=None）时看请求体自带思考标记。
-    body_thinking = body.get("thinking")
-    client_think_on = (
-        (isinstance(body_thinking, dict) and body_thinking.get("type") == "enabled")
-        or body.get("reasoning_effort") is not None
-    )
-    think_on = think_enabled is True or (think_enabled is None and client_think_on)
-    if selected.temperature is not None and selected.top_p is not None:
-        logger.warning(
-            "模型同时配置 temperature 与 top_p，按 temperature 生效: model=%s", model_name,
-        )
-    sampling_blocked = is_o_series or (is_claude and think_on)
-    if not sampling_blocked:
-        if selected.temperature is not None:
-            body["temperature"] = selected.temperature
-        elif selected.top_p is not None:
-            body["top_p"] = selected.top_p
-        if selected.top_k is not None:
-            body["top_k"] = selected.top_k
-    if selected.max_tokens is not None:
-        body["max_tokens"] = selected.max_tokens
-    if any(v is not None for v in (selected.temperature, selected.top_p, selected.top_k, selected.max_tokens)):
-        logger.info(
-            "POST /call-manage/chat/completions -> 模型级参数覆盖: model=%r temperature=%r top_p=%r top_k=%r max_tokens=%r",
-            model_name, body.get("temperature"), body.get("top_p"), body.get("top_k"), body.get("max_tokens"),
-        )
-
-    # ── Anthropic 原生端点：max_tokens 必填，缺省兜底 ──
-    # 模型与客户端都没给时上游直接 400；兜底值须能装下思考预算收敛的最低余量
-    # （budget ≥1024 + 正文 ≥1024），且小于默认思考预算以触发下方收敛逻辑。
-    # bool 是 int 子类：JSON max_tokens=true 会漏过 isinstance int 判断，须显式排除
-    body_max_tokens = body.get("max_tokens")
-    if is_anthropic_native and (not isinstance(body_max_tokens, int) or isinstance(body_max_tokens, bool)):
-        body["max_tokens"] = _ANTHROPIC_DEFAULT_MAX_TOKENS
-        logger.info(
-            "POST /call-manage/chat/completions -> Anthropic 原生端点缺 max_tokens，注入默认 %d model=%s",
-            _ANTHROPIC_DEFAULT_MAX_TOKENS, model_name,
-        )
-
-    # ── 思考参数注入：按选中模型/运营商的参数规范构造 ──
-    # 例外：强制思考型号（GLM-5.3 族 / MiniMax-M3.1+）即使「未表达偏好」也要注入。它们关不掉，不注入就是
-    # 厂商默认 max（最贵最慢那一档）——异步链 is_think=NULL（跟随客户端）而客户端又不发
-    # X-Thinking 头时正是这条路。按「关闭请求」交给 _apply_thinking_params 降级为
-    # enabled + 最低档；其余模型维持「缺头不注入、请求体原样透传」的既有契约。
-    if think_enabled is not None:
-        _apply_thinking_params(body, model_name, selected.com_url, think_enabled)
-    elif _glm_forced_thinking(model_name):
-        _apply_thinking_params(body, model_name, selected.com_url, False)
-
-    # ── Claude 思考模式预算收敛 ──
-    # budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
-    # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
-    # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
-    # guard 不能只看 think_enabled：主链缺思考头（think_enabled=None）而客户端自带
-    # thinking.enabled 时，上方刚兜底注入的 max_tokens 可能小于其 budget，同样须收敛。
-    # 注意：本块必须与上面的 if/elif **同级**，不能被塞进某个分支体——它自身已有按需 guard。
-    if "claude" in model_name.lower():
-        thinking = body.get("thinking")
-        if isinstance(thinking, dict) and thinking.get("type") == "enabled":
-            max_tokens = body.get("max_tokens")
-            if isinstance(max_tokens, int) and max_tokens <= _CLAUDE_THINKING_BUDGET:
-                budget = max_tokens - 1024
-                if budget >= 1024:
-                    thinking["budget_tokens"] = budget
-                    logger.info(
-                        "POST /call-manage/chat/completions -> Claude 思考 budget 收敛为 %d（max_tokens=%s）",
-                        budget, max_tokens,
-                    )
-                else:
-                    thinking["type"] = "disabled"
-                    logger.warning(
-                        "POST /call-manage/chat/completions -> max_tokens=%s 不足以容纳 Claude 思考最低预算(1024)，已关闭思考",
-                        max_tokens,
-                    )
-
-    # 提供商路由参数注入（OpenRouter）：把 model_manage_info.extra_config.provider 塞进请求体顶层 provider
-    _apply_provider_params(body, selected)
-
-    # Gemini 安全阈值注入：extra_body.safety_settings 全 BLOCK_NONE（仅 gemini 系模型）
-    _apply_gemini_safety(body, model_name)
-
-    is_stream = body.get("stream", False)
-
-    logger.info(
-        "POST /call-manage/chat/completions -> model=%s stream=%s purpose=%s "
-        "selected=%s(%s) url=%s body_model=%r",
-        model_name, is_stream, llm_purpose, selected.ai_model_name, selected.com_name,
-        forward_url, body.get("model"),
-    )
-
-    # Anthropic 原生端点（ofox /v1/messages）：x-api-key + anthropic-version（协议样例只认 x-api-key）
-    if is_anthropic_native:
-        fwd_headers = {
-            "x-api-key": api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-            "Content-Type": "application/json",
-        }
-    else:
-        fwd_headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-    # 打印最终发往上游 LLM 的请求报文
-    logger.info(
-        "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
-        json.dumps(body, ensure_ascii=False, indent=2),
-    )
-
-    # ── 流式转发 ──
-    if is_stream:
-        client: Optional[httpx.AsyncClient] = None
-        resp: Optional[httpx.Response] = None
-        stream_timeout = httpx.Timeout(300.0, read=60.0)
-
-        async def event_generator() -> AsyncGenerator[bytes, None]:
-            nonlocal client, resp
-            upstream_ok = False
-            total_bytes = 0
-            accumulated_chunks: list[bytes] = []
-            accumulated_content: list[str] = []  # 收集 delta.content
-            accumulated_reasoning: list[str] = []  # 收集思维链 delta.reasoning_content / delta.reasoning
-            accumulated_usage: dict[str, int] = {}  # 收集 usage（prompt/completion/total_tokens）
+            attempt_start = time.perf_counter()
+            stream_client: Optional[httpx.AsyncClient] = None
+            stream_resp: Optional[httpx.Response] = None
             try:
-                client = httpx.AsyncClient(timeout=stream_timeout)
-                resp = await client.send(
-                    client.build_request("POST", forward_url, json=body, headers=fwd_headers),
+                stream_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, read=60.0))
+                stream_resp = await stream_client.send(
+                    stream_client.build_request(
+                        "POST", plan["forward_url"], json=plan["body"],
+                        headers=plan["fwd_headers"],
+                    ),
                     stream=True,
                 )
+                ttfb_ms = (time.perf_counter() - attempt_start) * 1000
                 logger.info(
-                    "POST /call-manage/chat/completions <- %d model=%s stream",
-                    resp.status_code, model_name,
+                    "POST /call-manage/chat/completions <- %d model=%s stream ttfb=%.0fms attempt=%d/%d",
+                    stream_resp.status_code, model_name, ttfb_ms,
+                    attempt_index + 1, len(candidates),
                 )
-                if resp.status_code >= 400:
-                    error_body = await resp.aread()
-                    logger.error(
-                        "POST /call-manage/chat/completions <- %d model=%s stream_error body=%s",
-                        resp.status_code, model_name,
-                        error_body.decode("utf-8", errors="replace"),
-                    )
-                    yield (
-                        f"data: [ERROR] 上游返回 {resp.status_code}: "
-                        f"{error_body.decode('utf-8', errors='replace')}\n\n"
-                    ).encode("utf-8")
-                    return
-                upstream_ok = True
-                # 逐 chunk 累加日志用正文/usage——按行缓冲，细节见 _ingest_sse_chunk
-                sse_buf = b""
-                async for chunk in _stream_aiter_bytes(resp):
-                    total_bytes += len(chunk)
-                    accumulated_chunks.append(chunk)
-                    sse_buf = _ingest_sse_chunk(
-                        sse_buf + chunk,
-                        accumulated_content,
-                        accumulated_reasoning,
-                        accumulated_usage,
-                    )
-                    yield chunk
-                # 流结束：flush 无换行收尾的末行（末帧常无尾随 \n）
-                if sse_buf:
-                    _ingest_sse_chunk(
-                        sse_buf,
-                        accumulated_content,
-                        accumulated_reasoning,
-                        accumulated_usage,
-                        flush=True,
-                    )
             except Exception as e:
-                elapsed = (time.perf_counter() - t0) * 1000
-                # 异常类型名必须带上：部分上游断流异常（RemoteProtocolError 等）str() 为空串，
-                # 只打 {e} 会得到 "error="（2026-09-15 error.log 实测），客户端拿到的
-                # [ERROR] 事件也成了一句没有原因的空话。
-                # 压平空白：异常消息内嵌换行会把单行 SSE 帧撕成多行杂散行
+                elapsed = (time.perf_counter() - attempt_start) * 1000
                 err_desc = " ".join(f"{type(e).__name__}: {e}".split())
                 logger.error(
-                    "POST /call-manage/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
-                    model_name, elapsed, err_desc,
+                    "POST /call-manage/chat/completions <- STREAM CONNECT ERROR model=%s "
+                    "attempt=%d/%d error=%s",
+                    model_name, attempt_index + 1, len(candidates), err_desc,
                 )
-                yield f"data: [ERROR] 流式转发失败: {err_desc}\n\n".encode("utf-8")
-            finally:
-                await _close_safely(resp)
-                await _close_safely(client)
-                elapsed = (time.perf_counter() - t0) * 1000
-                content_text = "".join(accumulated_content)
-                reasoning_text = "".join(accumulated_reasoning)
-                usage_info = ""
-                if accumulated_usage:
-                    usage_info = (
-                        f" usage[prompt={accumulated_usage.get('prompt_tokens', 0)} "
-                        f"completion={accumulated_usage.get('completion_tokens', 0)} "
-                        f"total={accumulated_usage.get('total_tokens', 0)}]"
-                    )
-                logger.info(
-                    "POST /call-manage/chat/completions <- STREAM DONE model=%s "
-                    "elapsed=%.0fms total_bytes=%d content_chars=%d reasoning_chars=%d%s\n完整返回内容:\n%s",
-                    model_name, elapsed, total_bytes, len(content_text), len(reasoning_text), usage_info, content_text,
+                await _close_safely(stream_resp)
+                await _close_safely(stream_client)
+                await health_manage_service.record_failure(
+                    db, selected.ai_model_id, elapsed, type(e).__name__,
+                    failure_threshold=routing_config.failure_threshold,
+                    cooldown_seconds=routing_config.cooldown_seconds,
                 )
-                # 思维链内容单独打印（思考模式才产生，平时为空避免日志噪音）
-                if reasoning_text:
-                    logger.info(
-                        "POST /call-manage/chat/completions <- STREAM 思维链 model=%s:\n%s",
-                        model_name, reasoning_text,
-                    )
+                last_error = f"流式转发失败: {err_desc}"
+                if attempt_index + 1 < len(candidates):
+                    continue
+                return gateway_error_response(502, last_error)
 
-                # 记录调用次数与 token 用量（非关键路径，失败不影响响应）。
-                # 上游未必返回 usage（未请求 stream_options.include_usage），
-                # 但调用次数必须记，否则流式请求会绕过日限额。
-                if user_id and upstream_ok:
-                    try:
-                        await call_manage_service.record_token_usage(
-                            db, user_id, model_name, llm_purpose,
-                            is_stream=True, usage=accumulated_usage,
+            if stream_resp.status_code >= 400:
+                error_body = await stream_resp.aread()
+                error_text = error_body.decode("utf-8", errors="replace")
+                logger.error(
+                    "POST /call-manage/chat/completions <- %d model=%s stream_error body=%s",
+                    stream_resp.status_code, model_name, error_text,
+                )
+                if _counts_as_channel_failure(stream_resp.status_code):
+                    await health_manage_service.record_failure(
+                        db, selected.ai_model_id, ttfb_ms,
+                        f"http_{stream_resp.status_code}",
+                        failure_threshold=routing_config.failure_threshold,
+                        cooldown_seconds=routing_config.cooldown_seconds,
+                    )
+                await _close_safely(stream_resp)
+                await _close_safely(stream_client)
+                last_error = f"上游返回错误 (HTTP {stream_resp.status_code}): {error_text[:500]}"
+                if _is_retryable_status(stream_resp.status_code) and attempt_index + 1 < len(candidates):
+                    logger.warning(
+                        "POST /call-manage/chat/completions -> 流式请求重试下一个渠道: "
+                        "from=%s status=%d attempt=%d/%d",
+                        selected.ai_model_id, stream_resp.status_code,
+                        attempt_index + 1, len(candidates),
+                    )
+                    continue
+                return gateway_error_response(502, last_error)
+
+            await health_manage_service.record_success(db, selected.ai_model_id, ttfb_ms)
+            stream_started_at = time.perf_counter()
+
+            async def event_generator(
+                    _client=stream_client,
+                    _resp=stream_resp,
+                    _selected=selected,
+                    _model_name=model_name,
+                    _attempt_index=attempt_index,
+                    _started=stream_started_at,
+            ) -> AsyncGenerator[bytes, None]:
+                upstream_ok = False
+                total_bytes = 0
+                accumulated_content: list[str] = []
+                accumulated_reasoning: list[str] = []
+                accumulated_usage: dict[str, Any] = {}
+                try:
+                    upstream_ok = True
+                    sse_buf = b""
+                    async for chunk in _stream_aiter_bytes(_resp):
+                        total_bytes += len(chunk)
+                        sse_buf = _ingest_sse_chunk(
+                            sse_buf + chunk,
+                            accumulated_content,
+                            accumulated_reasoning,
+                            accumulated_usage,
                         )
-                    except Exception as e:
-                        logger.warning("记录流式 token 用量失败: user_id=%s error=%s", user_id, e)
+                        yield chunk
+                    if sse_buf:
+                        _ingest_sse_chunk(
+                            sse_buf,
+                            accumulated_content,
+                            accumulated_reasoning,
+                            accumulated_usage,
+                            flush=True,
+                        )
+                except Exception as e:
+                    elapsed = (time.perf_counter() - _started) * 1000
+                    err_desc = " ".join(f"{type(e).__name__}: {e}".split())
+                    logger.error(
+                        "POST /call-manage/chat/completions <- STREAM ERROR model=%s elapsed=%.0fms error=%s",
+                        _model_name, elapsed, err_desc,
+                    )
+                    await health_manage_service.record_failure(
+                        db, _selected.ai_model_id, elapsed, type(e).__name__,
+                        failure_threshold=routing_config.failure_threshold,
+                        cooldown_seconds=routing_config.cooldown_seconds,
+                    )
+                    yield f"data: [ERROR] 流式转发失败: {err_desc}\n\n".encode("utf-8")
+                finally:
+                    await _close_safely(_resp)
+                    await _close_safely(_client)
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    content_text = "".join(accumulated_content)
+                    reasoning_text = "".join(accumulated_reasoning)
+                    usage_info = ""
+                    if accumulated_usage:
+                        usage_info = (
+                            f" usage[prompt={accumulated_usage.get('prompt_tokens', 0)} "
+                            f"completion={accumulated_usage.get('completion_tokens', 0)} "
+                            f"total={accumulated_usage.get('total_tokens', 0)}]"
+                        )
+                    logger.info(
+                        "POST /call-manage/chat/completions <- STREAM DONE model=%s "
+                        "elapsed=%.0fms total_bytes=%d content_chars=%d reasoning_chars=%d%s",
+                        _model_name, elapsed, total_bytes, len(content_text),
+                        len(reasoning_text), usage_info,
+                    )
+                    if DEBUG and content_text:
+                        logger.info(
+                            "POST /call-manage/chat/completions <- STREAM 完整返回内容 model=%s:\n%s",
+                            _model_name, content_text,
+                        )
+                    if DEBUG and reasoning_text:
+                        logger.info(
+                            "POST /call-manage/chat/completions <- STREAM 思维链 model=%s:\n%s",
+                            _model_name, reasoning_text,
+                        )
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+                    if user_id and upstream_ok:
+                        # 独立后台任务落盘：客户端断开导致生成器被取消时仍能记账
+                        call_manage_service.schedule_background(
+                            call_manage_service.record_stream_usage_background(
+                                user_id=user_id,
+                                model=_model_name,
+                                purpose=llm_purpose,
+                                usage=accumulated_usage,
+                                feature_code=feature_code,
+                                input_price_per_1m=_selected.input_price_per_1m,
+                                output_price_per_1m=_selected.output_price_per_1m,
+                                price_currency=_selected.price_currency or "USD",
+                                provider_cost=accumulated_usage.get("cost"),
+                                project_id=project_id,
+                                project_currency=project_currency,
+                                token_id=token_id,
+                                token_last_used_at=token_last_used_at,
+                                channel_id=_selected.ai_model_id,
+                                request_id=request_id,
+                                retry_count=_attempt_index,
+                            )
+                        )
 
-    # ── 非流式转发 ──
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(forward_url, json=body, headers=fwd_headers)
-            elapsed = (time.perf_counter() - t0) * 1000
-            resp_text = resp.text
-            logger.info(
-                "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d\n完整返回报文:\n%s",
-                resp.status_code, model_name, elapsed, len(resp_text), resp_text,
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "X-Gateway-Model": model_name,
+                    "X-Gateway-Cluster": async_type,
+                    "X-Gateway-Retry-Count": str(attempt_index),
+                    "X-Request-Id": request_id,
+                },
             )
 
-            if resp.status_code >= 400:
-                logger.warning(
-                    "POST /call-manage/chat/completions <- upstream error %d model=%s body=%s",
-                    resp.status_code, model_name, resp_text[:500],
+        return gateway_error_response(502, last_error)
+
+    # ── 非流式转发：同集群内按渠道顺序重试 ──
+    selected = candidates[0]
+    model_name = ""
+    last_error = "All upstream channels failed"
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for attempt_index, selected in enumerate(candidates):
+                plan = _prepare_forward_plan(
+                    original_body, selected,
+                    is_async=is_async, identity=identity, raw_token=raw_token,
+                    response_format_header=response_format_header,
+                    thinking_header=thinking_header,
+                    request_id=request_id,
                 )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"上游返回错误 (HTTP {resp.status_code}): {resp_text[:500]}",
+                plan["body"] = _replace_core_prompts(plan["body"])
+                model_name = plan["model_name"]
+                if identity is not None and not project_manage_service.model_allowed(identity, model_name):
+                    logger.warning(
+                        "[%s] Token 不允许使用模型: token=%s model=%s",
+                        request_id, token_id, model_name,
+                    )
+                    return gateway_error_response(
+                        403, f"API key is not allowed to use model {model_name}",
+                        code="model_not_allowed",
+                    )
+
+                attempt_start = time.perf_counter()
+                try:
+                    resp = await client.post(
+                        plan["forward_url"], json=plan["body"], headers=plan["fwd_headers"],
+                    )
+                except Exception as e:
+                    elapsed = (time.perf_counter() - attempt_start) * 1000
+                    err_desc = " ".join(f"{type(e).__name__}: {e}".split())
+                    logger.error(
+                        "POST /call-manage/chat/completions <- ERROR model=%s elapsed=%.0fms error=%s",
+                        model_name, elapsed, err_desc,
+                    )
+                    await health_manage_service.record_failure(
+                        db, selected.ai_model_id, elapsed, type(e).__name__,
+                        failure_threshold=routing_config.failure_threshold,
+                        cooldown_seconds=routing_config.cooldown_seconds,
+                    )
+                    last_error = f"转发请求失败: {err_desc}"
+                    if attempt_index + 1 < len(candidates):
+                        logger.warning(
+                            "POST /call-manage/chat/completions -> 请求重试下一个渠道: "
+                            "from=%s attempt=%d/%d",
+                            selected.ai_model_id, attempt_index + 1, len(candidates),
+                        )
+                        continue
+                    raise HTTPException(status_code=502, detail=last_error)
+
+                elapsed = (time.perf_counter() - attempt_start) * 1000
+                resp_text = resp.text
+                logger.info(
+                    "POST /call-manage/chat/completions <- %d model=%s elapsed=%.0fms len=%d attempt=%d/%d",
+                    resp.status_code, model_name, elapsed, len(resp_text),
+                    attempt_index + 1, len(candidates),
+                )
+                if DEBUG:
+                    logger.info(
+                        "POST /call-manage/chat/completions <- 完整返回报文:\n%s", resp_text,
+                    )
+
+                if resp.status_code >= 400:
+                    logger.warning(
+                        "POST /call-manage/chat/completions <- upstream error %d model=%s body=%s",
+                        resp.status_code, model_name, resp_text[:500],
+                    )
+                    if _counts_as_channel_failure(resp.status_code):
+                        await health_manage_service.record_failure(
+                            db, selected.ai_model_id, elapsed,
+                            f"http_{resp.status_code}",
+                            failure_threshold=routing_config.failure_threshold,
+                            cooldown_seconds=routing_config.cooldown_seconds,
+                        )
+                    last_error = f"上游返回错误 (HTTP {resp.status_code}): {resp_text[:500]}"
+                    if _is_retryable_status(resp.status_code) and attempt_index + 1 < len(candidates):
+                        logger.warning(
+                            "POST /call-manage/chat/completions -> 请求重试下一个渠道: "
+                            "from=%s status=%d attempt=%d/%d",
+                            selected.ai_model_id, resp.status_code,
+                            attempt_index + 1, len(candidates),
+                        )
+                        continue
+                    raise HTTPException(status_code=502, detail=last_error)
+
+                await health_manage_service.record_success(
+                    db, selected.ai_model_id, elapsed,
                 )
 
-            try:
-                data = resp.json()
-            except Exception:
-                return JSONResponse(
-                    {"_raw": resp_text, "status_code": resp.status_code},
-                    status_code=resp.status_code,
-                )
+                try:
+                    data = resp.json()
+                except Exception:
+                    return JSONResponse(
+                        {"_raw": resp_text, "status_code": resp.status_code},
+                        status_code=resp.status_code,
+                        headers={
+                            "X-Gateway-Model": model_name,
+                            "X-Gateway-Cluster": async_type,
+                            "X-Gateway-Retry-Count": str(attempt_index),
+                            "X-Request-Id": request_id,
+                        },
+                    )
 
-            # 记录 token 用量（非关键路径，失败不影响响应）
-            try:
-                usage = (data or {}).get("usage") or {}
-                if usage and "prompt_tokens" not in usage and "input_tokens" in usage:
-                    # Anthropic 原生 usage 字段名 → OpenAI 口径（ofox /v1/messages 非流式）。
-                    # input_tokens 不含缓存部分，同流式口径（见 _ingest_anthropic_sse_data）并入 prompt
-                    cache_read = usage.get("cache_read_input_tokens") or 0
-                    cache_creation = usage.get("cache_creation_input_tokens") or 0
-                    prompt = usage.get("input_tokens", 0) + cache_read + cache_creation
-                    usage = {
-                        "prompt_tokens": prompt,
-                        "completion_tokens": usage.get("output_tokens", 0),
-                        "total_tokens": prompt + usage.get("output_tokens", 0),
-                        "prompt_cache_hit_tokens": cache_read,
-                        "prompt_cache_miss_tokens": cache_creation,
-                    }
-                await call_manage_service.record_token_usage(
-                    db, user_id, model_name, llm_purpose,
-                    is_stream=False, usage=usage,
-                )
-            except Exception as e:
-                logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", user_id, e)
+                # 记录 token 用量（非关键路径，失败不影响响应）
+                try:
+                    usage = (data or {}).get("usage") or {}
+                    provider_cost = usage.get("cost") if isinstance(usage, dict) else None
+                    if usage and "prompt_tokens" not in usage and "input_tokens" in usage:
+                        # Anthropic 原生 usage 字段名 → OpenAI 口径
+                        cache_read = usage.get("cache_read_input_tokens") or 0
+                        cache_creation = usage.get("cache_creation_input_tokens") or 0
+                        prompt = usage.get("input_tokens", 0) + cache_read + cache_creation
+                        usage = {
+                            "prompt_tokens": prompt,
+                            "completion_tokens": usage.get("output_tokens", 0),
+                            "total_tokens": prompt + usage.get("output_tokens", 0),
+                            "prompt_cache_hit_tokens": cache_read,
+                            "prompt_cache_miss_tokens": cache_creation,
+                        }
+                    usage_result = await call_manage_service.record_token_usage(
+                        db, user_id, model_name, llm_purpose,
+                        is_stream=False, usage=usage,
+                        feature_code=feature_code,
+                        input_price_per_1m=selected.input_price_per_1m,
+                        output_price_per_1m=selected.output_price_per_1m,
+                        price_currency=selected.price_currency or "USD",
+                        provider_cost=provider_cost,
+                        project_id=project_id,
+                        token_id=token_id,
+                        channel_id=selected.ai_model_id,
+                        request_id=request_id,
+                        retry_count=attempt_index,
+                    )
+                    if identity is not None and usage_result is not None:
+                        await project_manage_service.increment_project_usage(
+                            db, project_id,
+                            project_currency=project_currency,
+                            tokens=int(usage_result.get("totalTokens") or 0),
+                            cost=usage_result.get("cost"),
+                            cost_currency=usage_result.get("costCurrency"),
+                        )
+                        await project_manage_service.touch_token(
+                            db, token_id, last_used_at=token_last_used_at,
+                        )
+                except Exception as e:
+                    logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", user_id, e)
 
-            return data
+                response.headers["X-Gateway-Model"] = model_name
+                response.headers["X-Gateway-Cluster"] = async_type
+                response.headers["X-Gateway-Retry-Count"] = str(attempt_index)
+                response.headers["X-Request-Id"] = request_id
+                return data
+
+            raise HTTPException(status_code=502, detail=last_error)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1153,6 +1459,14 @@ async def chat_completions(
             "POST /call-manage/chat/completions <- ERROR model=%s elapsed=%.0fms error=%s",
             model_name, elapsed, str(e),
         )
+        try:
+            await health_manage_service.record_failure(
+                db, selected.ai_model_id, elapsed, type(e).__name__,
+                failure_threshold=routing_config.failure_threshold,
+                cooldown_seconds=routing_config.cooldown_seconds,
+            )
+        except Exception:
+            logger.exception("记录渠道失败状态失败")
         raise HTTPException(status_code=502, detail=f"转发请求失败: {str(e)}")
 
 

@@ -1,0 +1,3 @@
+-r requirements.txt
+# business-sync 集成测试使用独立 SQLite，不影响 MySQL
+aiosqlite>=0.19.0
