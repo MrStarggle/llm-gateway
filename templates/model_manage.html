@@ -64,7 +64,7 @@
         display: flex; align-items: center; gap: 10px; width: 100%;
         padding: 10px 10px; border: 0; border-radius: 8px; background: transparent;
         color: var(--text-2); font-size: 13.5px; font-weight: 500; cursor: pointer;
-        text-align: left; transition: background .15s, color .15s;
+        text-align: left; text-decoration: none; transition: background .15s, color .15s;
     }
     .nav-item svg { width: 18px; height: 18px; flex: 0 0 18px; }
     .nav-item:hover { background: #f4f5f9; color: var(--text); }
@@ -464,6 +464,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
                 <span>渠道健康</span>
             </button>
+            <a class="nav-item" href="/chat" target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>
+                <span>对话</span>
+            </a>
             <div class="nav-divider"></div>
             <button class="nav-item" data-section="integration" onclick="switchSection('integration')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -916,6 +920,7 @@
                             <p>兼容：<code>POST /api/v1/call-manage/chat/completions</code></p>
                             <p>支持 <code>stream: true</code>（SSE 原样透传）与普通 JSON 响应。模型名称、API 地址与
                                 API Key 均在管理页配置，调用方无需接触上游地址。</p>
+                            <p>模型列表：<code>GET /v1/models</code>（返回可用模型与集群）；内置聊天页：<code>/chat</code>。</p>
                         </div>
                         <div class="card doc-card">
                             <h3>鉴权</h3>
