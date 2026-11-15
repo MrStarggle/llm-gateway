@@ -15,6 +15,19 @@
 - **单管理员模式**：环境变量配置账号，JWT 登录，无需额外用户系统
 - **零配置存储**：默认 SQLite，开箱即用；需要多实例时可切换 MySQL
 
+## 最简单：一键启动
+
+需要 Python 3.10+（安装时勾选 “Add Python to PATH”）。
+
+- **Windows**：双击 `start.bat`
+- **macOS / Linux**：`./start.sh`
+
+脚本会自动创建虚拟环境、安装依赖、生成 `.env`、启动服务并打开管理台。
+默认地址 <http://127.0.0.1:9010/>，默认账号 `admin / admin`。
+
+> 默认账号只适合本机使用；如果要对局域网或公网开放，先修改 `.env` 中的
+> `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET_KEY`。
+
 ## 快速开始（Docker）
 
 ```bash
@@ -27,7 +40,7 @@ docker compose up -d --build
 
 默认使用 SQLite，数据库文件持久化在 `gateway_data` 卷中，无需额外数据库服务。
 
-## 本地运行
+## 手动启动（本地开发）
 
 ```bash
 python -m venv .venv
