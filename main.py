@@ -115,13 +115,19 @@ app.include_router(call_manage_controller.router, prefix="/v1", tags=["OpenAI å…
 @app.get("/model-manage", response_class=HTMLResponse)
 async def manage_page():
     html_path = BASE_DIR / "templates" / "model_manage.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        html_path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/user-manage", response_class=HTMLResponse)
 async def user_manage_page():
     html_path = BASE_DIR / "templates" / "user_manage.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        html_path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 if __name__ == "__main__":
