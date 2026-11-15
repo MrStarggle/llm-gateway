@@ -128,6 +128,24 @@ async def _configure_sqlite() -> None:
         await conn.execute(text("PRAGMA busy_timeout=5000"))
 
 
+async def _ensure_sqlite_schema() -> None:
+    """SQLite 存量库补列（create_all 不会修改已存在的表）."""
+    async with engine.begin() as conn:
+        columns = {
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(user_token_info)"))).fetchall()
+        }
+        if "feature_code" not in columns:
+            await conn.execute(text(
+                "ALTER TABLE user_token_info "
+                "ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized'"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_user_token_info_feature_code "
+                "ON user_token_info (feature_code)"
+            ))
+            print(" SQLite 迁移执行成功: user_token_info.feature_code")
+
+
 async def _init_mysql_schema() -> None:
     """MySQL：执行建表脚本（已有表跳过）."""
     if not SQL_SCHEMA_FILE.exists():
@@ -177,6 +195,7 @@ async def init_database():
 
         if IS_SQLITE:
             await _configure_sqlite()
+            await _ensure_sqlite_schema()
         else:
             await _init_mysql_schema()
             await run_migrations()
@@ -214,6 +233,9 @@ async def run_migrations():
         "ALTER TABLE model_manage_info ADD COLUMN max_tokens INT NULL COMMENT '覆盖请求体max_tokens；NULL=不覆盖（沿用客户端值）'",
         # 思考模式语义：0跟随请求/1强制开启/2强制关闭
         "ALTER TABLE model_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '思考模式：0跟随请求，1强制开启，2强制关闭'",
+        # 用量分组统计：功能码（调用方通过 X-Feature-Code 声明）
+        "ALTER TABLE user_token_info ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized' COMMENT '功能码（用量分组统计用）'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_feature_code (feature_code)",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

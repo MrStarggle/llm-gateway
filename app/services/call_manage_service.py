@@ -127,6 +127,7 @@ async def record_token_usage(
     purpose: str,
     is_stream: bool,
     usage: dict,
+    feature_code: str = "uncategorized",
 ) -> None:
     """记录一次 LLM 调用：当日计数 +1（user_daily_quota）与 token 明细一行（user_token_info）.
 
@@ -143,6 +144,7 @@ async def record_token_usage(
         user_id=user_id[:64],
         model=(model or "")[:128],
         purpose=(purpose or "main")[:16],
+        feature_code=(feature_code or "uncategorized")[:64],
         is_stream=1 if is_stream else 0,
         prompt_tokens=int(usage.get("prompt_tokens") or 0),
         completion_tokens=int(usage.get("completion_tokens") or 0),

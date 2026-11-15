@@ -32,6 +32,10 @@ DEBUG = os.getenv("GATEWAY_DEBUG", "").strip().lower() in ("1", "true", "yes", "
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
 
+# ── 功能码：仅用于用量分组统计，非法值回落 uncategorized ──
+_DEFAULT_FEATURE_CODE = "uncategorized"
+_FEATURE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
+
 # ── o 系列模型（上游不支持 response_format / 非默认 temperature）──
 _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
 
@@ -148,6 +152,17 @@ def _validate_model_name(name: str) -> str:
     if ".." in name:
         raise HTTPException(status_code=400, detail="非法 model 名称")
     return name
+
+
+def _normalize_feature_code(raw: Optional[str]) -> str:
+    """规范化功能码：小写、限长 64；非法值回落 uncategorized."""
+    code = (raw or "").strip().lower()
+    if not code:
+        return _DEFAULT_FEATURE_CODE
+    if not _FEATURE_CODE_RE.match(code):
+        logger.warning("忽略非法 X-Feature-Code=%r，按 uncategorized 统计", raw)
+        return _DEFAULT_FEATURE_CODE
+    return code
 
 
 def _validate_url(url: str) -> str:
@@ -608,6 +623,7 @@ async def chat_completions(
     x_response_format: Optional[str] = Header(None, alias="X-Response-Format"),
     x_thinking: Optional[str] = Header(None, alias="X-Thinking"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_feature_code: Optional[str] = Header(None, alias="X-Feature-Code"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
@@ -623,6 +639,8 @@ async def chat_completions(
                     仅在模型「思考模式」为跟随请求时生效；模型配置为强制开/关时以模型为准.
         X-Response-Format: "json_object" 时按实际模型注入 response_format.
         X-User-Id: 调用方标识，用于 token 用量与调用记录统计；缺省视为匿名.
+        X-Feature-Code: 功能码（如 role_reply），仅用于用量分组统计；
+                        不传或非法时记为 uncategorized.
 
     请求体: 标准 OpenAI chat completions 格式。模型配置了 temperature / top_p / top_k /
             max_tokens 时服务端会覆盖同名请求参数，未配置（NULL）则保留客户端值.
@@ -633,6 +651,7 @@ async def chat_completions(
     response_format_header = x_response_format
     thinking_header = x_thinking
     user_id = x_user_id
+    feature_code = _normalize_feature_code(x_feature_code)
 
     llm_purpose = purpose_header or "main"
     # 任何以 async 开头的 purpose 都按异步计（如 async、async:summary 等），
@@ -999,6 +1018,7 @@ async def chat_completions(
                         await call_manage_service.record_token_usage(
                             db, user_id, model_name, llm_purpose,
                             is_stream=True, usage=accumulated_usage,
+                            feature_code=feature_code,
                         )
                     except Exception as e:
                         logger.warning("记录流式 token 用量失败: user_id=%s error=%s", user_id, e)
@@ -1065,6 +1085,7 @@ async def chat_completions(
                 await call_manage_service.record_token_usage(
                     db, user_id, model_name, llm_purpose,
                     is_stream=False, usage=usage,
+                    feature_code=feature_code,
                 )
             except Exception as e:
                 logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", user_id, e)

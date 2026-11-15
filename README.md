@@ -168,6 +168,7 @@ curl -X POST "http://localhost:9010/router/call-manage/chat/completions" \
 | `X-Thinking` | `1` / `0` | 思考开关；仅在模型思考模式为「跟随请求」时生效 |
 | `X-Response-Format` | `json_object` | 要求 JSON 输出 |
 | `X-User-Id` | 调用方标识 | 用于调用记录与用量统计 |
+| `X-Feature-Code` | 如 `role_reply` | 功能码，用于用量明细分组统计；不传记为 `uncategorized` |
 | `Authorization` | `Bearer <key>` | 可选；主链可覆盖服务端配置的上游 Key |
 
 ## 项目结构

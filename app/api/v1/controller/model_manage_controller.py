@@ -174,9 +174,14 @@ async def delete_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/usage/overview")
-async def usage_overview(days: int = 7, db: AsyncSession = Depends(get_db)):
-    """用量总览：汇总 + 每日趋势 + 按模型分布"""
-    data = await usage_manage_service.get_usage_overview(db, days)
+async def usage_overview(
+        days: int = 7,
+        group_by: str = "",
+        db: AsyncSession = Depends(get_db),
+):
+    """用量总览：汇总 + 每日趋势 + 按模型分布 + 自定义分组明细（group_by 逗号分隔）"""
+    dims = [d.strip() for d in group_by.split(",") if d.strip()]
+    data = await usage_manage_service.get_usage_overview(db, days, dims)
     return ResponseFactory.ok(data=data, message="查询成功")
 
 

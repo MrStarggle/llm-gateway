@@ -528,25 +528,19 @@
                 <div class="card">
                     <div class="card-head">
                         <div>
-                            <div class="card-title">模型明细</div>
-                            <div class="card-sub" id="modelTableSub">统计区间内各模型的调用与 Token 用量</div>
+                            <div class="card-title">用量明细</div>
+                            <div class="card-sub">按选中维度分组统计；不选时默认按模型</div>
+                        </div>
+                        <div class="segmented" id="usageGroupBy">
+                            <button data-group="feature_code" onclick="toggleUsageGroup('feature_code', this)">功能码</button>
+                            <button data-group="model" class="active" onclick="toggleUsageGroup('model', this)">模型</button>
+                            <button data-group="user_id" onclick="toggleUsageGroup('user_id', this)">用户</button>
                         </div>
                     </div>
                     <div class="table-wrap">
                         <table>
-                            <thead>
-                            <tr>
-                                <th>模型</th>
-                                <th>调用次数</th>
-                                <th>输入 Token</th>
-                                <th>输出 Token</th>
-                                <th>总 Token</th>
-                                <th>占比</th>
-                            </tr>
-                            </thead>
-                            <tbody id="usageModelBody">
-                            <tr><td colspan="6"><div class="empty">暂无数据</div></td></tr>
-                            </tbody>
+                            <thead id="usageGroupHead"></thead>
+                            <tbody id="usageGroupBody"></tbody>
                         </table>
                     </div>
                 </div>
@@ -757,6 +751,11 @@
                                     <td><code>X-User-Id</code></td>
                                     <td>用户 ID</td>
                                     <td>调用方标识，用于用量统计；不传视为匿名</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Feature-Code</code></td>
+                                    <td>如 <code>role_reply</code></td>
+                                    <td>功能码，仅用于用量明细分组统计；不传或非法记为 <code>uncategorized</code></td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -1110,6 +1109,7 @@ let _env = ENVIRONMENTS[0].key;
 let API_BASE = ENVIRONMENTS[0].apiBase;
 let _currentSection = 'usage';
 let _usageDays = 7;
+let _usageGroupBy = ['model'];   // 用量明细分组维度：feature_code / model / user_id
 let _providers = null;          // 提供商缓存
 let _companyCache = null;       // companlist.txt 厂商列表缓存
 let _companyTimer = null;       // 厂商远程模糊搜索防抖
@@ -1358,20 +1358,41 @@ function setUsageRange(days, btn) {
     loadUsage(true);
 }
 
+function toggleUsageGroup(group, btn) {
+    if (_usageGroupBy.includes(group)) {
+        _usageGroupBy = _usageGroupBy.filter(g => g !== group);
+        btn.classList.remove('active');
+    } else {
+        _usageGroupBy.push(group);
+        btn.classList.add('active');
+    }
+    if (!_usageGroupBy.length) {
+        _usageGroupBy = ['model'];
+        document.querySelectorAll('#usageGroupBy button').forEach(el => {
+            el.classList.toggle('active', el.dataset.group === 'model');
+        });
+    }
+    loadUsage(true);
+}
+
 async function loadUsage() {
     const chartEl = document.getElementById('usageChart');
     chartEl.innerHTML = '<div class="chart-empty">加载中...</div>';
     try {
-        const result = await api('GET', '/usage/overview?days=' + _usageDays);
+        const groupParam = encodeURIComponent(_usageGroupBy.join(','));
+        const result = await api('GET', '/usage/overview?days=' + _usageDays + '&group_by=' + groupParam);
         const data = result?.data || {};
-        renderUsage(data.summary || {}, data.daily || [], data.byModel || []);
+        renderUsage(
+            data.summary || {}, data.daily || [], data.byModel || [],
+            data.grouped || [], data.groupBy || _usageGroupBy
+        );
         _loaded.usage = true;
     } catch (e) {
         chartEl.innerHTML = '<div class="chart-empty">加载失败</div>';
     }
 }
 
-function renderUsage(summary, daily, byModel) {
+function renderUsage(summary, daily, byModel, grouped, groupBy) {
     document.getElementById('statCalls').textContent = fmt(summary.calls);
     document.getElementById('statCallsSub').textContent =
         '日均 ' + fmt(summary.days ? Math.round(summary.calls / summary.days) : 0) + ' 次 · 近 ' + (summary.days || _usageDays) + ' 天';
@@ -1386,6 +1407,43 @@ function renderUsage(summary, daily, byModel) {
 
     renderUsageChart(daily);
     renderModelUsage(byModel);
+    renderGroupedUsage(grouped, groupBy);
+}
+
+const USAGE_DIM_LABELS = { feature_code: '功能码', model: '模型', user_id: '用户' };
+const USAGE_DIM_KEYS = { feature_code: 'featureCode', model: 'model', user_id: 'userId' };
+
+function renderGroupedUsage(grouped, groupBy) {
+    const head = document.getElementById('usageGroupHead');
+    const body = document.getElementById('usageGroupBody');
+    const dims = (groupBy && groupBy.length) ? groupBy : ['model'];
+    const total = grouped.reduce((sum, r) => sum + (r.totalTokens || 0), 0);
+
+    head.innerHTML = '<tr>' +
+        dims.map(d => `<th>${USAGE_DIM_LABELS[d] || esc(d)}</th>`).join('') +
+        '<th>调用次数</th><th>输入 Token</th><th>输出 Token</th><th>总 Token</th><th>占比</th></tr>';
+
+    if (!grouped.length) {
+        body.innerHTML = `<tr><td colspan="${dims.length + 5}"><div class="empty">暂无数据</div></td></tr>`;
+        return;
+    }
+
+    body.innerHTML = grouped.map(r => {
+        const share = total ? ((r.totalTokens || 0) / total * 100).toFixed(1) : '0.0';
+        const dimCells = dims.map(d => {
+            const value = r[USAGE_DIM_KEYS[d]] ?? '-';
+            return `<td><span class="ellipsis" title="${esc(value)}">${esc(value)}</span></td>`;
+        }).join('');
+        return `
+            <tr>
+                ${dimCells}
+                <td class="num">${fmt(r.calls)}</td>
+                <td class="num">${fmt(r.promptTokens)}</td>
+                <td class="num">${fmt(r.completionTokens)}</td>
+                <td class="num">${fmt(r.totalTokens)}</td>
+                <td class="num">${share}%</td>
+            </tr>`;
+    }).join('');
 }
 
 function renderUsageChart(daily) {
@@ -1420,28 +1478,13 @@ function renderUsageChart(daily) {
 }
 
 function renderModelUsage(byModel) {
-    const body = document.getElementById('usageModelBody');
     const mini = document.getElementById('modelMiniList');
     const total = byModel.reduce((sum, m) => sum + (m.totalTokens || 0), 0);
 
     if (!byModel.length) {
-        body.innerHTML = '<tr><td colspan="6"><div class="empty">暂无数据</div></td></tr>';
         mini.innerHTML = '<div class="empty">暂无数据</div>';
         return;
     }
-
-    body.innerHTML = byModel.map(m => {
-        const share = total ? ((m.totalTokens || 0) / total * 100).toFixed(1) : '0.0';
-        return `
-            <tr>
-                <td><span class="ellipsis" title="${esc(m.model)}"><strong>${esc(m.model)}</strong></span></td>
-                <td class="num">${fmt(m.calls)}</td>
-                <td class="num">${fmt(m.promptTokens)}</td>
-                <td class="num">${fmt(m.completionTokens)}</td>
-                <td class="num">${fmt(m.totalTokens)}</td>
-                <td class="num">${share}%</td>
-            </tr>`;
-    }).join('');
 
     mini.innerHTML = byModel.slice(0, 6).map((m, i) => {
         const share = total ? ((m.totalTokens || 0) / total * 100) : 0;

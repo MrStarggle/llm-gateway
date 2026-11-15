@@ -26,8 +26,20 @@ def _range_start(days: int) -> date:
     return date.today() - timedelta(days=days - 1)
 
 
-async def get_usage_overview(db: AsyncSession, days: int = 7) -> dict:
-    """用量总览：汇总卡片 + 每日趋势 + 按模型分布（一次查询返回，供管理页一块展示）"""
+_GROUP_DIMENSIONS = {
+    "feature_code": (UserTokenInfo.feature_code, "featureCode"),
+    "model": (UserTokenInfo.model, "model"),
+    "user_id": (UserTokenInfo.user_id, "userId"),
+}
+_DEFAULT_GROUP_BY = ["model"]
+
+
+async def get_usage_overview(
+    db: AsyncSession,
+    days: int = 7,
+    group_by: list[str] | None = None,
+) -> dict:
+    """用量总览：汇总卡片 + 每日趋势 + 按模型分布 + 自定义分组明细"""
     days = max(1, min(days, _MAX_DAYS))
     start = _range_start(days)
 
@@ -109,6 +121,47 @@ async def get_usage_overview(db: AsyncSession, days: int = 7) -> dict:
         for row in model_rows
     ]
 
+    # 自定义分组：功能码 / 模型 / 用户，可多选；未指定时按模型
+    dims = [d for d in (group_by or []) if d in _GROUP_DIMENSIONS]
+    if not dims:
+        dims = list(_DEFAULT_GROUP_BY)
+
+    columns = [_GROUP_DIMENSIONS[d][0] for d in dims]
+    grouped_rows = (await db.execute(
+        select(
+            *columns,
+            func.count(UserTokenInfo.id),
+            func.coalesce(func.sum(UserTokenInfo.prompt_tokens), 0),
+            func.coalesce(func.sum(UserTokenInfo.completion_tokens), 0),
+            func.coalesce(func.sum(UserTokenInfo.total_tokens), 0),
+        )
+        .where(UserTokenInfo.record_date >= start)
+        .group_by(*columns)
+        .order_by(func.coalesce(func.sum(UserTokenInfo.total_tokens), 0).desc())
+        .limit(100)
+    )).all()
+
+    grouped = []
+    for row in grouped_rows:
+        item = {}
+        for i, dim in enumerate(dims):
+            key = _GROUP_DIMENSIONS[dim][1]
+            value = row[i]
+            if dim == "feature_code":
+                value = value or "uncategorized"
+            elif dim == "user_id":
+                value = value or "anonymous"
+            else:
+                value = value or "-"
+            item[key] = value
+        item.update({
+            "calls": int(row[-4] or 0),
+            "promptTokens": int(row[-3] or 0),
+            "completionTokens": int(row[-2] or 0),
+            "totalTokens": int(row[-1] or 0),
+        })
+        grouped.append(item)
+
     total_tokens = sum(d["totalTokens"] for d in daily)
     summary = {
         "days": days,
@@ -123,7 +176,13 @@ async def get_usage_overview(db: AsyncSession, days: int = 7) -> dict:
         "cacheHitTokens": sum(t.get("cacheHitTokens", 0) for t in token_map.values()),
     }
 
-    return {"summary": summary, "daily": daily, "byModel": by_model}
+    return {
+        "summary": summary,
+        "daily": daily,
+        "byModel": by_model,
+        "groupBy": dims,
+        "grouped": grouped,
+    }
 
 
 async def list_call_records(
@@ -177,6 +236,7 @@ async def list_call_records(
             "userId": row.user_id,
             "model": row.model,
             "purpose": row.purpose,
+            "featureCode": row.feature_code or "uncategorized",
             "isStream": row.is_stream,
             "promptTokens": int(row.prompt_tokens or 0),
             "completionTokens": int(row.completion_tokens or 0),
