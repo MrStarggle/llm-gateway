@@ -25,8 +25,11 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 
 if not os.getenv("JWT_SECRET_KEY"):
     logger.warning("JWT_SECRET_KEY 未设置，使用开发默认值；生产环境请务必注入随机密钥")
-if not os.getenv("ADMIN_PASSWORD"):
-    logger.warning("ADMIN_PASSWORD 未设置，使用默认密码 admin；生产环境请务必修改")
+if ADMIN_PASSWORD.strip().lower() in ("", "admin", "change-me"):
+    logger.warning(
+        "ADMIN_PASSWORD 为空或仍是默认值，管理台等于无保护；"
+        "公开部署前请务必修改 ADMIN_USERNAME / ADMIN_PASSWORD"
+    )
 
 security = HTTPBearer(auto_error=False)
 

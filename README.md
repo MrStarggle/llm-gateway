@@ -51,7 +51,7 @@ uvicorn main:app --host 0.0.0.0 --port 9010
 | `SQLITE_PATH` | SQLite 数据文件路径 | `data/gateway.db` |
 | `DATABASE_URL` | 显式 SQLAlchemy 异步连接串，优先级最高 | 空 |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接（`DB_BACKEND=mysql` 时使用） | localhost / 3306 / root / 空 / `llm_gateway` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号 | `admin` / `admin` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号（明文保存在 env，单管理员） | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | `dev-only-change-me` |
 | `PORT` | 服务端口 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时输出请求体调试日志 | `0` |
@@ -68,6 +68,18 @@ MYSQL_DATABASE=llm_gateway
 ```
 
 MySQL 模式会在启动时执行 `app/db/schema.sql` 与幂等迁移。
+
+### 接入自有用户体系
+
+开源版默认是单管理员模式：`app/api/v1/controller/auth_controller.py` 用 env 中的
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` 校验并签发 JWT，全程不查用户表。
+
+如果要接入你自己的用户表/OAuth/SSO，只需要替换两处：
+
+- `auth_controller.py`：登录接口改为校验你自己的用户
+- `admin_auth.verify_admin_token`：改为校验你的 token（或复用同一套 JWT）
+
+管理接口统一通过 `Depends(verify_admin_token)` 鉴权，替换这一层即可。
 
 ## 调用
 
