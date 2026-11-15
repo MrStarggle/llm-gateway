@@ -8,6 +8,13 @@ class UserTokenInfo(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True, comment="自增主键")
     user_id = Column(String(64), nullable=False, index=True, comment="用户ID")
+    # 项目归属：使用 sk-gw Token 调用时必填；匿名调用为空
+    project_id = Column(String(64), nullable=True, index=True, comment="项目ID")
+    token_id = Column(String(64), nullable=True, index=True, comment="项目Token ID")
+    # 实际服务的模型行与请求追踪
+    channel_id = Column(String(64), nullable=True, index=True, comment="实际服务的模型ID（ai_model_id）")
+    request_id = Column(String(64), nullable=True, index=True, comment="请求ID")
+    retry_count = Column(Integer, nullable=False, server_default="0", comment="网关内部重试次数")
     model = Column(String(128), nullable=False, server_default="", comment="模型名称")
     purpose = Column(String(16), nullable=False, server_default="main", comment="用途: main/async/async1..async13（异步分路）")
     feature_code = Column(String(64), nullable=False, server_default="uncategorized", index=True, comment="功能码（用量分组统计用）")
