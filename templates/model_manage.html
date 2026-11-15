@@ -241,11 +241,11 @@
     .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
     .chart { display: flex; align-items: flex-end; gap: 6px; height: 196px; padding-top: 14px; overflow-x: auto; }
     .chart-col { position: relative; flex: 1 1 0; min-width: 8px; max-width: 54px; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; padding-bottom: 18px; }
-    .chart-stack { width: 100%; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; border-radius: 0 0 2px 2px; overflow: hidden; background: #f3f4f8; }
+    .chart-stack { width: 100%; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; border-radius: 0; overflow: hidden; background: #f3f4f8; }
     .chart-seg { width: 100%; transition: filter .15s; }
     .chart-col:hover .chart-stack { filter: brightness(.96); }
     .chart-seg.input { background: var(--accent); }
-    .chart-seg.output { background: var(--accent-fade); }
+    .chart-seg.output { background: var(--accent-fade); border-radius: 0 0 2px 2px; }
     .chart-x { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-3); white-space: nowrap; }
     .chart-empty { height: 190px; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 13px; }
 
