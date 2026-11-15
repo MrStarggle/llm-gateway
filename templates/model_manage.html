@@ -1,0 +1,2333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大模型管理平台 - LLM Gateway</title>
+<style>
+    :root {
+        --accent: #4d6bfe;
+        --accent-strong: #3d59e8;
+        --accent-soft: #eef1ff;
+        --accent-fade: #9db0ff;
+        --text: #1a1d29;
+        --text-2: #5b6070;
+        --text-3: #9096a6;
+        --border: #e8eaf0;
+        --bg: #f6f7fb;
+        --surface: #ffffff;
+        --success: #12a150;
+        --success-soft: #e9f8ef;
+        --danger: #e5484d;
+        --danger-soft: #fdecec;
+        --warning: #d97706;
+        --warning-soft: #fff7e8;
+        --radius: 12px;
+        --sidebar-w: 236px;
+        --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .05);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+                     "Microsoft YaHei", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 14px;
+        -webkit-font-smoothing: antialiased;
+    }
+    button, input, select, textarea { font-family: inherit; }
+
+    /* ========== 布局 ========== */
+    .app { display: flex; min-height: 100vh; }
+    .sidebar {
+        width: var(--sidebar-w); flex: 0 0 var(--sidebar-w); height: 100vh;
+        position: sticky; top: 0; background: var(--surface);
+        border-right: 1px solid var(--border); display: flex; flex-direction: column;
+        padding: 18px 14px 16px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 22px; }
+    .brand-mark {
+        width: 32px; height: 32px; border-radius: 9px; flex: 0 0 32px;
+        background: linear-gradient(135deg, #4d6bfe 0%, #7b8cff 100%);
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font-weight: 700; font-size: 17px;
+        box-shadow: 0 4px 10px rgba(77, 107, 254, .28);
+    }
+    .brand-name { font-size: 14.5px; font-weight: 700; letter-spacing: -.2px; line-height: 1.2; }
+    .brand-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    .nav-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); padding: 6px 10px 8px; }
+    .nav { display: flex; flex-direction: column; gap: 2px; }
+    .nav-item {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 10px 10px; border: 0; border-radius: 8px; background: transparent;
+        color: var(--text-2); font-size: 13.5px; font-weight: 500; cursor: pointer;
+        text-align: left; transition: background .15s, color .15s;
+    }
+    .nav-item svg { width: 18px; height: 18px; flex: 0 0 18px; }
+    .nav-item:hover { background: #f4f5f9; color: var(--text); }
+    .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+    .nav-item.active svg { stroke: var(--accent); }
+
+    .sidebar-foot { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); }
+    .env-title { font-size: 11px; font-weight: 600; color: var(--text-3); margin: 0 4px 8px; }
+    .env-switch { display: flex; flex-direction: column; gap: 2px; }
+    .env-btn {
+        display: flex; align-items: center; gap: 8px; border: 0; background: transparent;
+        border-radius: 7px; padding: 7px 9px; font-size: 12.5px; color: var(--text-2);
+        cursor: pointer; text-align: left; transition: background .15s, color .15s;
+    }
+    .env-btn:hover { background: #f4f5f9; }
+    .env-btn.active { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+    .env-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; background: #c6cad4; }
+    .env-btn.active .env-dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(77,107,254,.14); }
+    .sidebar-version { font-size: 10.5px; color: #b7bbc7; padding: 12px 6px 0; }
+
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .topbar {
+        display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;
+        padding: 26px 34px 18px; background: var(--bg);
+        position: sticky; top: 0; z-index: 20; backdrop-filter: blur(6px);
+    }
+    .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.3px; }
+    .page-desc { font-size: 12.5px; color: var(--text-3); margin-top: 5px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
+    .content { padding: 0 34px 40px; max-width: 1480px; width: 100%; }
+    .section { display: none; }
+    .section.active { display: block; animation: fadeUp .22s ease; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    /* ========== 按钮 / 表单 ========== */
+    .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        padding: 8px 14px; border: 1px solid transparent; border-radius: 8px;
+        font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+        transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
+    }
+    .btn svg { width: 15px; height: 15px; }
+    .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 1px 2px rgba(77,107,254,.28); }
+    .btn-primary:hover { background: var(--accent-strong); }
+    .btn-ghost { background: var(--surface); border-color: var(--border); color: var(--text-2); }
+    .btn-ghost:hover { border-color: #d3d7e2; color: var(--text); }
+    .btn-danger { background: var(--danger-soft); color: var(--danger); }
+    .btn-danger:hover { background: #fbdcdc; }
+    .btn-link { background: transparent; border: 0; color: var(--accent); padding: 4px 6px; }
+    .btn-link:hover { background: var(--accent-soft); }
+    .btn-link.danger { color: var(--danger); }
+    .btn-link.danger:hover { background: var(--danger-soft); }
+    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 7px; }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-icon { padding: 8px; width: 34px; height: 34px; }
+
+    .input, .select, .textarea {
+        width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px;
+        background: var(--surface); font-size: 13px; color: var(--text); outline: none;
+        transition: border-color .15s, box-shadow .15s;
+    }
+    .input::placeholder, .textarea::placeholder { color: #b3b8c6; }
+    .input:focus, .select:focus, .textarea:focus {
+        border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77, 107, 254, .12);
+    }
+    .input:disabled, .select:disabled, .textarea:disabled {
+        background: #f3f4f7; color: #a6abb8; cursor: not-allowed;
+    }
+    .param-panel { background: #fbfbfd; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .param-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 18px; }
+    .param-item { display: flex; flex-direction: column; gap: 5px; }
+    .param-name { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .param-range { font-size: 10.5px; font-weight: 400; color: var(--text-3); }
+    .param-hint { font-size: 10.5px; line-height: 1.5; color: var(--text-3); }
+    @media (max-width: 700px) { .param-grid { grid-template-columns: 1fr; } }
+    .select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239096a6' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+    .textarea { resize: vertical; min-height: 64px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field > label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .field > label .req { color: var(--danger); }
+    .field .hint { font-size: 11.5px; color: var(--text-3); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field-row .full { grid-column: 1 / -1; }
+    .radio-group { display: flex; gap: 16px; padding: 5px 0; }
+    .radio-group label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+    .radio-group input { accent-color: var(--accent); }
+
+    /* ========== 通用卡片 / 表格 ========== */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .card-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .card-title { font-size: 14px; font-weight: 650; }
+    .card-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+    .card-body { padding: 20px; }
+
+    .toolbar {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .toolbar .input, .toolbar .select { width: auto; min-width: 130px; }
+    .toolbar .spacer { flex: 1; }
+    .toolbar-search { position: relative; }
+    .toolbar-search .input { padding-left: 32px; min-width: 180px; }
+    .toolbar-search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--text-3); pointer-events: none; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 11px 14px; font-size: 13px; border-bottom: 1px solid #f1f2f6; vertical-align: middle; }
+    th { color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; background: #fbfbfd; white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: #f9faff; }
+    .table-wrap { overflow-x: auto; }
+    .num { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--text-3); }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .ellipsis { display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .actions { display: flex; gap: 2px; white-space: nowrap; }
+
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+    .tag-blue { background: var(--accent-soft); color: var(--accent); }
+    .tag-green { background: var(--success-soft); color: var(--success); }
+    .tag-orange { background: var(--warning-soft); color: var(--warning); }
+    .tag-purple { background: #f3ecff; color: #7c3aed; }
+    .tag-gray { background: #f3f4f7; color: var(--text-3); }
+    .tag-red { background: var(--danger-soft); color: var(--danger); }
+    /* 集群1..9 使用固定色系，便于列表中快速区分 */
+    .tag-c1 { background: #eef1ff; color: #4d6bfe; }
+    .tag-c2 { background: #e9f8ef; color: #12a150; }
+    .tag-c3 { background: #fff7e8; color: #d97706; }
+    .tag-c4 { background: #f3ecff; color: #7c3aed; }
+    .tag-c5 { background: #e6f7fa; color: #0891b2; }
+    .tag-c6 { background: #fdeef3; color: #db2777; }
+    .tag-c7 { background: #e7f7f3; color: #0f766e; }
+    .tag-c8 { background: #f2f9e5; color: #4d7c0f; }
+    .tag-c9 { background: #f1f4f9; color: #475569; }
+
+    .empty { text-align: center; padding: 54px 20px; color: var(--text-3); font-size: 13px; }
+    .empty svg { width: 38px; height: 38px; stroke: #d6d9e2; margin-bottom: 10px; }
+
+    /* 胶囊开关 */
+    .toggle { position: relative; display: inline-block; width: 38px; height: 22px; cursor: pointer; vertical-align: middle; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track { position: absolute; inset: 0; background: #d9dce5; border-radius: 22px; transition: background .2s; }
+    .toggle-track::before { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+    .toggle input:checked + .toggle-track { background: var(--success); }
+    .toggle input:checked + .toggle-track::before { transform: translateX(16px); }
+    .toggle.loading { opacity: .5; pointer-events: none; }
+
+    /* ========== 用量 ========== */
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+    .segmented { display: inline-flex; padding: 3px; background: #eceef4; border-radius: 9px; gap: 2px; }
+    .segmented button {
+        border: 0; background: transparent; padding: 6px 13px; border-radius: 7px;
+        font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: all .15s;
+    }
+    .segmented button:hover { color: var(--text); }
+    .segmented button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+    .stat {
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 18px 20px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+    }
+    .stat-label { font-size: 12px; color: var(--text-3); font-weight: 500; display: flex; align-items: center; gap: 6px; }
+    .stat-value { font-size: 26px; font-weight: 700; letter-spacing: -.6px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 11.5px; color: var(--text-3); margin-top: 6px; }
+    .stat-accent { position: absolute; right: -18px; top: -18px; width: 70px; height: 70px; border-radius: 50%; background: var(--accent-soft); opacity: .7; }
+
+    .grid-2 { display: grid; grid-template-columns: 1.65fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .chart-wrap { padding: 20px 20px 12px; }
+    .chart-legend { display: flex; gap: 16px; font-size: 11.5px; color: var(--text-3); }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+    .chart { display: flex; align-items: flex-end; gap: 6px; height: 196px; padding-top: 14px; overflow-x: auto; }
+    .chart-col { position: relative; flex: 1 1 0; min-width: 8px; max-width: 54px; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; padding-bottom: 18px; }
+    .chart-stack { width: 100%; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; border-radius: 4px 4px 2px 2px; overflow: hidden; background: #f3f4f8; }
+    .chart-seg { width: 100%; transition: filter .15s; }
+    .chart-col:hover .chart-stack { filter: brightness(.96); }
+    .chart-seg.input { background: var(--accent); }
+    .chart-seg.output { background: var(--accent-fade); }
+    .chart-x { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-3); white-space: nowrap; }
+    .chart-empty { height: 190px; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 13px; }
+
+    .mini-list { padding: 6px 8px 12px; }
+    .mini-row { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 8px; }
+    .mini-row:hover { background: #f9faff; }
+    .mini-rank { width: 20px; font-size: 11px; font-weight: 700; color: var(--text-3); }
+    .mini-main { flex: 1; min-width: 0; }
+    .mini-model { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mini-bar { height: 4px; border-radius: 4px; background: #eef0f6; margin-top: 6px; overflow: hidden; }
+    .mini-bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+    .mini-value { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .mini-value small { display: block; font-size: 10.5px; color: var(--text-3); font-weight: 400; margin-top: 2px; }
+
+    /* ========== 分页 ========== */
+    .pagination { display: flex; align-items: center; justify-content: space-between; padding: 13px 20px; border-top: 1px solid var(--border); }
+    .page-info { font-size: 12.5px; color: var(--text-3); }
+    .page-btns { display: flex; align-items: center; gap: 6px; }
+    .page-num { font-size: 12.5px; color: var(--text-2); padding: 0 8px; font-variant-numeric: tabular-nums; }
+
+    /* ========== 模态框 ========== */
+    .modal-overlay {
+        display: none; position: fixed; inset: 0; z-index: 100;
+        background: rgba(16, 20, 34, .42); align-items: flex-start; justify-content: center;
+        padding: 7vh 18px 18px; overflow-y: auto; backdrop-filter: blur(2px);
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+        width: 600px; max-width: 100%; background: var(--surface); border-radius: 14px;
+        box-shadow: 0 24px 64px rgba(16, 24, 40, .2); animation: popIn .2s ease;
+    }
+    .modal.wide { width: 700px; }
+    @keyframes popIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid var(--border); }
+    .modal-head h3 { font-size: 15.5px; font-weight: 650; }
+    .modal-close { border: 0; background: transparent; color: var(--text-3); font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+    .modal-close:hover { background: #f3f4f7; color: var(--text); }
+    .modal-body { padding: 22px 24px; }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 15px 24px; border-top: 1px solid var(--border); background: #fbfbfd; border-radius: 0 0 14px 14px; }
+
+    /* 下拉建议 */
+    .combo { position: relative; }
+    .combo .input { padding-right: 30px; }
+    .combo .arrow { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-3); font-size: 10px; transition: transform .15s; }
+    .combo .arrow.open { transform: translateY(-50%) rotate(180deg); }
+    .combo-list {
+        display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+        background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+        box-shadow: 0 12px 32px rgba(16,24,40,.14); max-height: 230px; overflow-y: auto; padding: 4px;
+    }
+    .combo-list.active { display: block; }
+    .combo-item { padding: 8px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer; color: var(--text-2); }
+    .combo-item:hover { background: var(--accent-soft); color: var(--accent); }
+    .combo-empty { padding: 12px; font-size: 12px; color: var(--text-3); text-align: center; }
+    .company-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .ci-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+    .combo-item:hover .ci-name { color: var(--accent); }
+    .ci-meta { font-size: 11px; color: var(--text-3); max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ========== Toast / 鉴权 ========== */
+    .toast {
+        position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
+        padding: 10px 18px; border-radius: 9px; font-size: 13px; font-weight: 500;
+        z-index: 200; color: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.18);
+        animation: toastIn .22s ease;
+    }
+    .toast-success { background: #172033; }
+    .toast-error { background: var(--danger); }
+    @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+    .auth-overlay { display: none; position: fixed; inset: 0; z-index: 300; background: rgba(16,20,34,.55); align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(3px); }
+    .auth-overlay.active { display: flex; }
+    .auth-card { width: 380px; max-width: 100%; background: var(--surface); border-radius: 16px; padding: 34px 32px 28px; text-align: center; box-shadow: 0 30px 80px rgba(16,24,40,.28); }
+    .auth-icon { width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 13px; background: var(--accent-soft); display: flex; align-items: center; justify-content: center; color: var(--accent); }
+    .auth-icon svg { width: 23px; height: 23px; }
+    .auth-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 5px; }
+    .auth-hint { font-size: 12.5px; color: var(--text-3); margin-bottom: 20px; }
+    .auth-card .input { text-align: center; }
+    .auth-card .input + .input { margin-top: 10px; }
+    .auth-error { font-size: 12px; color: var(--danger); min-height: 18px; margin-top: 8px; text-align: left; }
+    .auth-card .btn { width: 100%; margin-top: 6px; padding: 10px 0; }
+
+    /* ========== 接入说明 ========== */
+    .nav-divider { height: 1px; background: var(--border); margin: 10px 8px; }
+    .doc-stack { display: flex; flex-direction: column; gap: 16px; }
+    .doc-hero {
+        background: linear-gradient(120deg, #f2f5ff 0%, #ffffff 58%);
+        border: 1px solid #e3e8ff; border-radius: var(--radius); padding: 22px 24px;
+    }
+    .doc-hero h2 { font-size: 16px; margin-bottom: 8px; }
+    .doc-hero p { font-size: 13px; color: var(--text-2); line-height: 1.75; }
+    .doc-card { padding: 20px 22px; }
+    .doc-card h3 { font-size: 14px; font-weight: 650; margin-bottom: 6px; }
+    .doc-card .doc-sub { font-size: 12px; color: var(--text-3); margin-bottom: 14px; }
+    .doc-card p { font-size: 13px; color: var(--text-2); line-height: 1.8; }
+    .doc-card p + p { margin-top: 8px; }
+    .doc-card code, .doc-hero code {
+        background: #f1f3f9; color: #3d59e8; padding: 1px 6px; border-radius: 5px;
+        font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 12px;
+    }
+    .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .doc-table th, .doc-table td { padding: 9px 12px; font-size: 12.5px; }
+    .doc-table td code { white-space: nowrap; }
+    .doc-steps { counter-reset: step; display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .doc-step { display: flex; gap: 12px; align-items: flex-start; }
+    .doc-step::before {
+        counter-increment: step; content: counter(step);
+        width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%;
+        background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700;
+        display: flex; align-items: center; justify-content: center; margin-top: 1px;
+    }
+    .doc-step div { font-size: 12.5px; color: var(--text-2); line-height: 1.7; }
+    .code-box { margin-top: 12px; border-radius: 10px; overflow: hidden; background: #0f172a; }
+    .code-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; background: rgba(255,255,255,.06);
+        color: #94a3b8; font-size: 11.5px; letter-spacing: .02em;
+    }
+    .code-head button {
+        border: 1px solid rgba(255,255,255,.18); background: transparent; color: #cbd5e1;
+        border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+    }
+    .code-head button:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .code-block {
+        margin: 0; padding: 16px 18px; color: #e2e8f0;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12.5px; line-height: 1.75; overflow-x: auto; white-space: pre;
+    }
+
+    /* ========== 响应式 ========== */
+    @media (max-width: 1200px) {
+        .stat-grid { grid-template-columns: repeat(2, 1fr); }
+        .grid-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 900px) {
+        .sidebar { width: 68px; flex-basis: 68px; padding: 16px 10px; }
+        .brand-text, .nav-label, .nav-item span, .env-title, .env-btn span, .sidebar-version { display: none; }
+        .brand { justify-content: center; padding-bottom: 16px; }
+        .nav-item { justify-content: center; padding: 11px; }
+        .env-btn { justify-content: center; }
+        .topbar, .content { padding-left: 20px; padding-right: 20px; }
+        .topbar { flex-direction: column; align-items: flex-start; }
+    }
+</style>
+</head>
+<body>
+<div class="app">
+    <!-- 左侧菜单 -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">L</div>
+            <div class="brand-text">
+                <div class="brand-name">LLM Gateway</div>
+                <div class="brand-sub">大模型管理平台</div>
+            </div>
+        </div>
+
+        <div class="nav-label">控制台</div>
+        <nav class="nav">
+            <button class="nav-item active" data-section="usage" onclick="switchSection('usage')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-6"/><path d="M22 20H2"/></svg>
+                <span>用量信息</span>
+            </button>
+            <button class="nav-item" data-section="calls" onclick="switchSection('calls')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+                <span>调用记录</span>
+            </button>
+            <button class="nav-item" data-section="providers" onclick="switchSection('providers')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg>
+                <span>大模型提供商管理</span>
+            </button>
+            <button class="nav-item" data-section="models" onclick="switchSection('models')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4"/><path d="M15 2v4"/><path d="M9 18v4"/><path d="M15 18v4"/><path d="M2 9h4"/><path d="M2 15h4"/><path d="M18 9h4"/><path d="M18 15h4"/></svg>
+                <span>大模型管理</span>
+            </button>
+            <div class="nav-divider"></div>
+            <button class="nav-item" data-section="integration" onclick="switchSection('integration')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                <span>接入说明</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-foot">
+            <div id="envBlock">
+                <div class="env-title">环境</div>
+                <div class="env-switch" id="envSwitch"></div>
+            </div>
+            <div class="sidebar-version">LLM API Gateway · v2</div>
+        </div>
+    </aside>
+
+    <!-- 右侧内容 -->
+    <main class="main">
+        <header class="topbar">
+            <div>
+                <h1 class="page-title" id="pageTitle">用量信息</h1>
+                <p class="page-desc" id="pageDesc">查看平台 LLM 调用量与 Token 消耗</p>
+            </div>
+            <div class="topbar-actions">
+                <button class="btn btn-ghost" onclick="refreshSection()" title="刷新当前页面">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                    刷新
+                </button>
+                <button class="btn btn-ghost" id="btnLock" onclick="lockPage()" style="display:none" title="退出管理登录">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                    退出
+                </button>
+            </div>
+        </header>
+
+        <div class="content">
+            <!-- ============ 用量信息 ============ -->
+            <section class="section active" id="sec-usage">
+                <div class="section-head">
+                    <div class="segmented" id="usageRange">
+                        <button class="active" onclick="setUsageRange(7, this)">近 7 天</button>
+                        <button onclick="setUsageRange(30, this)">近 30 天</button>
+                        <button onclick="setUsageRange(90, this)">近 90 天</button>
+                    </div>
+                    <span class="muted" style="font-size:12px" id="usageRangeText"></span>
+                </div>
+
+                <div class="stat-grid">
+                    <div class="stat">
+                        <div class="stat-accent"></div>
+                        <div class="stat-label">调用次数</div>
+                        <div class="stat-value num" id="statCalls">-</div>
+                        <div class="stat-sub" id="statCallsSub">累计 LLM 请求</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-accent"></div>
+                        <div class="stat-label">总 Token 消耗</div>
+                        <div class="stat-value num" id="statTokens">-</div>
+                        <div class="stat-sub" id="statTokensSub">输入 + 输出</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-accent"></div>
+                        <div class="stat-label">输入 Token</div>
+                        <div class="stat-value num" id="statPrompt">-</div>
+                        <div class="stat-sub" id="statCacheSub">缓存命中 -</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-accent"></div>
+                        <div class="stat-label">活跃用户</div>
+                        <div class="stat-value num" id="statUsers">-</div>
+                        <div class="stat-sub">产生调用记录的用户数</div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <div class="card-title">每日 Token 消耗</div>
+                                <div class="card-sub">输入 / 输出 Token 构成</div>
+                            </div>
+                            <div class="chart-legend">
+                                <span class="legend-item"><span class="legend-dot" style="background:#4d6bfe"></span>输入</span>
+                                <span class="legend-item"><span class="legend-dot" style="background:#9db0ff"></span>输出</span>
+                            </div>
+                        </div>
+                        <div class="chart-wrap">
+                            <div class="chart" id="usageChart"><div class="chart-empty">暂无数据</div></div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <div class="card-title">模型用量分布</div>
+                                <div class="card-sub">按 Token 总量排序</div>
+                            </div>
+                        </div>
+                        <div class="mini-list" id="modelMiniList">
+                            <div class="empty">暂无数据</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div>
+                            <div class="card-title">模型明细</div>
+                            <div class="card-sub" id="modelTableSub">统计区间内各模型的调用与 Token 用量</div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>模型</th>
+                                <th>调用次数</th>
+                                <th>输入 Token</th>
+                                <th>输出 Token</th>
+                                <th>总 Token</th>
+                                <th>占比</th>
+                            </tr>
+                            </thead>
+                            <tbody id="usageModelBody">
+                            <tr><td colspan="6"><div class="empty">暂无数据</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 调用记录 ============ -->
+            <section class="section" id="sec-calls">
+                <div class="card">
+                    <div class="toolbar">
+                        <div class="toolbar-search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                            <input class="input" id="callUser" placeholder="用户 ID">
+                        </div>
+                        <input class="input" id="callModel" placeholder="模型名称">
+                        <select class="select" id="callPurpose">
+                            <option value="">全部用途</option>
+                            <option value="main">主模型 main</option>
+                            <option value="async">异步 async</option>
+                            <option value="async1">异步分路 async1</option>
+                            <option value="async2">异步分路 async2</option>
+                            <option value="async3">异步分路 async3</option>
+                            <option value="async4">异步分路 async4</option>
+                            <option value="async5">异步分路 async5</option>
+                            <option value="async6">异步分路 async6</option>
+                            <option value="async7">异步分路 async7</option>
+                            <option value="async8">异步分路 async8</option>
+                            <option value="async9">异步分路 async9</option>
+                            <option value="async10">异步分路 async10</option>
+                            <option value="async11">异步分路 async11</option>
+                            <option value="async12">异步分路 async12</option>
+                            <option value="async13">异步分路 async13</option>
+                        </select>
+                        <input class="input" id="callStart" type="date" title="开始日期">
+                        <input class="input" id="callEnd" type="date" title="结束日期">
+                        <button class="btn btn-primary btn-sm" onclick="searchCalls()">查询</button>
+                        <button class="btn btn-ghost btn-sm" onclick="resetCallFilters()">重置</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>用户</th>
+                                <th>模型</th>
+                                <th>用途</th>
+                                <th>流式</th>
+                                <th>输入</th>
+                                <th>输出</th>
+                                <th>缓存命中</th>
+                                <th>总 Token</th>
+                            </tr>
+                            </thead>
+                            <tbody id="callBody">
+                            <tr><td colspan="9"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination">
+                        <span class="page-info" id="callPageInfo">共 0 条</span>
+                        <div class="page-btns">
+                            <button class="btn btn-ghost btn-sm" id="callPrev" onclick="gotoCallPage(-1)">上一页</button>
+                            <span class="page-num" id="callPageNum">1 / 1</span>
+                            <button class="btn btn-ghost btn-sm" id="callNext" onclick="gotoCallPage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 大模型提供商管理 ============ -->
+            <section class="section" id="sec-providers">
+                <div class="section-head" style="justify-content:flex-end">
+                    <button class="btn btn-primary" onclick="openProviderModal()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                        新增提供商
+                    </button>
+                </div>
+
+                <div class="card">
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>提供商名称</th>
+                                <th>API 地址</th>
+                                <th>API Key</th>
+                                <th>关联模型</th>
+                                <th>备注</th>
+                                <th>更新时间</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="providerBody">
+                            <tr><td colspan="7"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 大模型管理 ============ -->
+            <section class="section" id="sec-models">
+                <div class="card">
+                    <div class="toolbar">
+                        <div class="toolbar-search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                            <input class="input" id="filterModelName" placeholder="模型名称" oninput="loadModels()">
+                        </div>
+                        <select class="select" id="filterProvider" onchange="loadModels()">
+                            <option value="">全部提供商</option>
+                        </select>
+                        <select class="select" id="filterType" onchange="loadModels()">
+                            <option value="">全部类型</option>
+                            <option value="0">文本模型</option>
+                            <option value="1">语音模型</option>
+                        </select>
+                        <select class="select" id="filterUsing" onchange="loadModels()">
+                            <option value="">全部状态</option>
+                            <option value="1">使用中</option>
+                            <option value="0">未使用</option>
+                        </select>
+                        <select class="select" id="filterAsyncType" onchange="loadModels()">
+                            <option value="">全部集群</option>
+                            <option value="async1">集群1</option>
+                            <option value="async2">集群2</option>
+                            <option value="async3">集群3</option>
+                            <option value="async4">集群4</option>
+                            <option value="async5">集群5</option>
+                            <option value="async6">集群6</option>
+                            <option value="async7">集群7</option>
+                            <option value="async8">集群8</option>
+                            <option value="async9">集群9</option>
+                        </select>
+                        <div class="spacer"></div>
+                        <button class="btn btn-primary" onclick="openModelModal()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                            新增模型
+                        </button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>模型名称</th>
+                                <th>提供商</th>
+                                <th>类型</th>
+                                <th>使用中</th>
+                                <th>思考</th>
+                                <th>流式</th>
+                                <th>集群</th>
+                                <th>大模型参数</th>
+                                <th>提供商参数</th>
+                                <th>备注</th>
+                                <th style="text-align:right">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody id="modelBody">
+                            <tr><td colspan="11"><div class="empty">加载中...</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 接入说明 ============ -->
+            <section class="section" id="sec-integration">
+                <div class="doc-stack">
+                    <div class="doc-hero">
+                        <h2>OpenAI 兼容接口，按集群路由</h2>
+                        <p>所有模型请求统一转发到 <code>POST /router/call-manage/chat/completions</code>（同源备用
+                            <code>/api/v1/call-manage/chat/completions</code>）。请求体保持标准 OpenAI chat/completions
+                            格式，<code>model</code> 建议留空，由服务端按 <code>X-Async-Type</code> 指定的集群轮询选择模型。</p>
+                    </div>
+
+                    <div class="doc-grid">
+                        <div class="card doc-card">
+                            <h3>接入地址</h3>
+                            <div class="doc-sub">Base URL 与端点</div>
+                            <p>推荐：<code>POST /router/call-manage/chat/completions</code></p>
+                            <p>备用：<code>POST /api/v1/call-manage/chat/completions</code></p>
+                            <p>支持 <code>stream: true</code>（SSE 原样透传）与普通 JSON 响应。模型名称、API 地址与
+                                API Key 均在管理页配置，调用方无需接触上游地址。</p>
+                        </div>
+                        <div class="card doc-card">
+                            <h3>鉴权</h3>
+                            <div class="doc-sub">Authorization 可选</div>
+                            <p>模型已在「大模型提供商管理」中配置 API Key 时，请求方无需再传 key。</p>
+                            <p>如需覆盖主链 key，可传 <code>Authorization: Bearer &lt;key&gt;</code>；异步链始终使用服务端配置。</p>
+                            <p><code>X-User-Id</code> 用于调用记录与 token 用量统计，不传视为匿名调用。</p>
+                        </div>
+                    </div>
+
+                    <div class="card doc-card">
+                        <h3>请求头</h3>
+                        <div class="doc-sub">路由头、思考与 JSON 输出控制</div>
+                        <div class="table-wrap">
+                            <table class="doc-table">
+                                <thead>
+                                <tr><th>请求头</th><th>取值</th><th>说明</th></tr>
+                                </thead>
+                                <tbody>
+                                <tr>
+                                    <td><code>X-Async-Type</code></td>
+                                    <td><code>async1</code>..<code>async9</code></td>
+                                    <td>模型集群。主链建议 <code>async1</code>，异步链建议 <code>async2</code>；同集群内轮询</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Purpose</code></td>
+                                    <td><code>main</code> / <code>async1</code>..<code>async13</code></td>
+                                    <td>用途标识，仅用于日志与 token 用量记账，不影响模型选择</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Thinking</code></td>
+                                    <td><code>1</code> / <code>0</code></td>
+                                    <td>思考模式开关；仅在模型「思考模式」为跟随请求时生效</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Response-Format</code></td>
+                                    <td><code>json_object</code></td>
+                                    <td>要求 JSON 输出（服务端按实际模型决定是否注入）</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-User-Id</code></td>
+                                    <td>用户 ID</td>
+                                    <td>调用方标识，用于用量统计；不传视为匿名</td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card doc-card">
+                        <h3>集群与模型选择</h3>
+                        <div class="doc-sub">集群在「大模型管理」中按模型配置</div>
+                        <div class="table-wrap">
+                            <table class="doc-table">
+                                <thead>
+                                <tr><th>集群</th><th>请求头</th><th>典型用途</th></tr>
+                                </thead>
+                                <tbody>
+                                <tr><td><span class="tag tag-c1">集群1</span></td><td><code>async1</code></td><td>主 LLM 默认池</td></tr>
+                                <tr><td><span class="tag tag-c2">集群2</span></td><td><code>async2</code></td><td>异步 / 后台任务默认池（原基础模型池）</td></tr>
+                                <tr>
+                                    <td>
+                                        <div style="display:flex;flex-wrap:wrap;gap:4px">
+                                            <span class="tag tag-c3">集群3</span><span class="tag tag-c4">集群4</span>
+                                            <span class="tag tag-c5">集群5</span><span class="tag tag-c6">集群6</span>
+                                            <span class="tag tag-c7">集群7</span><span class="tag tag-c8">集群8</span>
+                                            <span class="tag tag-c9">集群9</span>
+                                        </div>
+                                    </td>
+                                    <td><code>async3</code>..<code>async9</code></td>
+                                    <td>特殊分流或独立容量池</td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p style="margin-top:14px">未传 <code>X-Async-Type</code> 时兼容回落：主链 <code>async1</code>、
+                            异步链 <code>async2</code>。每个集群内所有启用模型按轮询调度。</p>
+                        <p>模型配置了 <code>temperature</code> / <code>top_p</code> / <code>top_k</code> /
+                            <code>max_tokens</code> 时，服务端会覆盖请求体同名参数；留空则沿用客户端值。</p>
+                        <p><code>temperature</code> 与 <code>top_p</code> 互斥，只能配置一个；<code>top_k</code>
+                            仅部分厂商支持。o 系列跳过采样参数，Claude 开启思考时固定 temperature=1。</p>
+                    </div>
+
+                    <div class="doc-grid">
+                        <div class="card doc-card">
+                            <h3>cURL 示例</h3>
+                            <div class="doc-sub">流式请求主链集群</div>
+                            <div class="code-box">
+                                <div class="code-head"><span>bash</span><button onclick="copyCode(this)">复制</button></div>
+                                <pre class="code-block">curl -X POST "https://your-domain/router/call-manage/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "X-Async-Type: async1" \
+  -H "X-Thinking: 0" \
+  -H "X-User-Id: demo-user" \
+  -d '{
+    "model": "",
+    "messages": [
+      {"role": "user", "content": "你好"}
+    ],
+    "stream": true
+  }'</pre>
+                            </div>
+                        </div>
+                        <div class="card doc-card">
+                            <h3>Python 示例</h3>
+                            <div class="doc-sub">非流式请求异步集群</div>
+                            <div class="code-box">
+                                <div class="code-head"><span>python</span><button onclick="copyCode(this)">复制</button></div>
+                                <pre class="code-block">import requests
+
+resp = requests.post(
+    "https://your-domain/router/call-manage/chat/completions",
+    headers={
+        "Content-Type": "application/json",
+        "X-Async-Type": "async2",
+        "X-Purpose": "async13",
+        "X-User-Id": "demo-user",
+    },
+    json={
+        "model": "",
+        "messages": [{"role": "user", "content": "你好"}],
+        "stream": False,
+    },
+    timeout=120,
+)
+print(resp.json())</pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card doc-card">
+                        <h3>响应与错误</h3>
+                        <div class="doc-sub">流式返回标准 SSE；非流式返回上游 JSON 信封</div>
+                        <div class="table-wrap">
+                            <table class="doc-table">
+                                <thead>
+                                <tr><th>状态码</th><th>含义</th><th>处理建议</th></tr>
+                                </thead>
+                                <tbody>
+                                <tr><td>200</td><td>成功</td><td>流式读取 <code>data:</code> 事件，直到 <code>[DONE]</code></td></tr>
+                                <tr><td>400</td><td>X-Async-Type 非法</td><td>使用 <code>async1</code>..<code>async9</code></td></tr>
+                                <tr><td>502</td><td>上游厂商返回错误</td><td>检查提供商地址与 Key，或切换模型</td></tr>
+                                <tr><td>503</td><td>所选集群没有可用模型</td><td>在「大模型管理」中启用该集群模型</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card doc-card">
+                        <h3>快速开始</h3>
+                        <div class="doc-steps">
+                            <div class="doc-step"><div>在「大模型提供商管理」新增提供商，填写名称、API 地址与 API Key。</div></div>
+                            <div class="doc-step"><div>在「大模型管理」新增模型，选择提供商并设置集群；temperature 与 max_tokens 可选。</div></div>
+                            <div class="doc-step"><div>调用 chat/completions，<code>model</code> 留空，通过 <code>X-Async-Type</code> 选择集群。</div></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<!-- ============ 提供商 新增/编辑 ============ -->
+<div class="modal-overlay" id="providerOverlay">
+    <div class="modal">
+        <div class="modal-head">
+            <h3 id="providerModalTitle">新增提供商</h3>
+            <button class="modal-close" onclick="closeProviderModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="providerEditId">
+            <div class="field" style="margin-bottom:16px">
+                <label><span class="req">*</span> 提供商名称</label>
+                <div class="combo">
+                    <input class="input" id="pName" placeholder="输入或选择提供商名称..." autocomplete="off"
+                           oninput="onProviderNameInput()" onfocus="onProviderNameFocus()"
+                           onblur="onProviderNameBlur()" onkeydown="onProviderNameKeydown(event)">
+                    <span class="arrow" id="pNameArrow">▼</span>
+                    <div class="combo-list" id="providerComboList"></div>
+                </div>
+                <span class="hint">实时匹配 companlist.txt；选中后 API 地址为空时会自动填入。</span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label><span class="req">*</span> API 地址</label>
+                <input class="input" id="pUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
+                <span class="hint">填写基础地址即可，调用时会自动补 /chat/completions；模型列表从 /models 拉取。</span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label><span class="req">*</span> API Key</label>
+                <input class="input mono" id="pKey" placeholder="sk-..." autocomplete="off">
+                <span class="hint">同一提供商下的模型共用此密钥。</span>
+            </div>
+            <div class="field">
+                <label>备注</label>
+                <textarea class="textarea" id="pRemarks" placeholder="可选备注信息"></textarea>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeProviderModal()">取消</button>
+            <button class="btn btn-primary" id="providerSubmitBtn" onclick="submitProvider()">确认新增</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ 模型 新增/编辑 ============ -->
+<div class="modal-overlay" id="modelOverlay">
+    <div class="modal wide">
+        <div class="modal-head">
+            <h3 id="modelModalTitle">新增模型</h3>
+            <button class="modal-close" onclick="closeModelModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="modelEditId">
+            <div class="field-row">
+                <div class="field">
+                    <label><span class="req">*</span> 大模型提供商</label>
+                    <select class="select" id="mProvider" onchange="onProviderChange()">
+                        <option value="">请选择提供商</option>
+                    </select>
+                    <span class="hint">地址与 API Key 由提供商统一配置。</span>
+                </div>
+                <div class="field">
+                    <label><span class="req">*</span> 模型名称</label>
+                    <div class="combo">
+                        <input class="input" id="mModelName" placeholder="选择提供商后自动加载，也可手动输入" autocomplete="off"
+                               oninput="onModelNameInput()" onfocus="onModelNameFocus()" onblur="onModelNameBlur()">
+                        <span class="arrow" id="modelArrow">▼</span>
+                        <div class="combo-list" id="modelComboList"></div>
+                    </div>
+                    <span class="hint" id="modelLoadHint">选择提供商后自动拉取可用模型</span>
+                </div>
+                <div class="field">
+                    <label>模型类型</label>
+                    <div class="radio-group">
+                        <label><input type="radio" name="mType" value="0" checked> 文本模型</label>
+                        <label><input type="radio" name="mType" value="1"> 语音模型</label>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>是否使用中</label>
+                    <div class="radio-group">
+                        <label><input type="radio" name="mUsing" value="1" checked> 是</label>
+                        <label><input type="radio" name="mUsing" value="0"> 否</label>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>思考模式</label>
+                    <select class="select" id="mThink">
+                        <option value="0">跟随请求（不干预）</option>
+                        <option value="1">强制开启思考</option>
+                        <option value="2">强制关闭思考</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>流式输出</label>
+                    <div class="radio-group">
+                        <label><input type="radio" name="mStream" value="1" checked> 是</label>
+                        <label><input type="radio" name="mStream" value="0"> 否</label>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>集群类型</label>
+                    <select class="select" id="mAsyncType">
+                        <option value="async1" selected>集群1</option>
+                        <option value="async2">集群2</option>
+                        <option value="async3">集群3</option>
+                        <option value="async4">集群4</option>
+                        <option value="async5">集群5</option>
+                        <option value="async6">集群6</option>
+                        <option value="async7">集群7</option>
+                        <option value="async8">集群8</option>
+                        <option value="async9">集群9</option>
+                    </select>
+                    <span class="hint">同一集群内的启用模型按轮询调度。</span>
+                </div>
+                <div class="field full">
+                    <label>大模型参数</label>
+                    <div class="param-panel">
+                        <div class="param-grid">
+                            <div class="param-item">
+                                <div class="param-name">temperature <span class="param-range">0 ~ 2</span></div>
+                                <input class="input" id="mTemperature" type="number" step="0.1" min="0" max="2"
+                                       placeholder="不覆盖" oninput="onSamplingInput('temperature')">
+                                <div class="param-hint">越高内容越随机；与 top_p 互斥，填写一个会禁用另一个。</div>
+                            </div>
+                            <div class="param-item">
+                                <div class="param-name">top_p <span class="param-range">0 ~ 1</span></div>
+                                <input class="input" id="mTopP" type="number" step="0.05" min="0" max="1"
+                                       placeholder="不覆盖" oninput="onSamplingInput('top_p')">
+                                <div class="param-hint">核采样，仅保留累计概率前 P 的 token；与 temperature 互斥。</div>
+                            </div>
+                            <div class="param-item">
+                                <div class="param-name">top_k <span class="param-range">≥ 1</span></div>
+                                <input class="input" id="mTopK" type="number" min="1" placeholder="不覆盖">
+                                <div class="param-hint">仅保留概率最高的 K 个 token；部分厂商不支持。</div>
+                            </div>
+                            <div class="param-item">
+                                <div class="param-name">max_tokens <span class="param-range">≥ 1</span></div>
+                                <input class="input" id="mMaxTokens" type="number" min="1" placeholder="不覆盖">
+                                <div class="param-hint">单次响应的最大输出 token 数。</div>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="hint">留空表示沿用客户端请求参数；temperature 与 top_p 只能填写一个。</span>
+                </div>
+                <div class="field">
+                    <label>额外配置 (JSON)</label>
+                    <input class="input mono" id="mExtraConfig" placeholder='{"voice": "alloy", "speed": 1.0}'>
+                </div>
+                <div class="field full">
+                    <label>提供商参数 (JSON)</label>
+                    <textarea class="textarea mono" id="mProviderConfig" placeholder='{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}'></textarea>
+                    <span class="hint" id="providerParamHint">仅 OpenRouter 提供商会启用该参数。</span>
+                </div>
+                <div class="field full">
+                    <label>备注</label>
+                    <textarea class="textarea" id="mRemarks" placeholder="可选备注信息"></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeModelModal()">取消</button>
+            <button class="btn btn-primary" id="modelSubmitBtn" onclick="submitModel()">确认新增</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ 鉴权遮罩 ============ -->
+<div class="auth-overlay" id="authOverlay">
+    <div class="auth-card">
+        <div class="auth-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        </div>
+        <h2>管理员登录</h2>
+        <p class="auth-hint" id="authHint">使用管理员账号登录</p>
+        <input class="input" type="text" id="authUsername" placeholder="管理员账号"
+               onkeydown="if(event.key==='Enter')document.getElementById('authPassword').focus()">
+        <input class="input" type="password" id="authPassword" placeholder="密码"
+               onkeydown="if(event.key==='Enter')doUnlock()">
+        <div class="auth-error" id="authError"></div>
+        <button class="btn btn-primary" id="authBtn" onclick="doUnlock()">登 录</button>
+    </div>
+</div>
+
+<script>
+// ==================== 基础状态 ====================
+// ==================== 控制台配置（默认同源单环境） ====================
+// 多环境部署可在本页脚本前注入 window.LLM_CONSOLE_ENVIRONMENTS，例如：
+// [{ key:'local', label:'本地环境', apiBase:'http://127.0.0.1:9010/api/v1/model-manage' },
+//  { key:'prod',  label:'生产环境', apiBase:'https://api.example.com/api/v1/model-manage' }]
+// loginUrl 缺省按 apiBase 的 origin 推导为 {origin}/api/v1/auth/login。
+const STORAGE_KEY = 'llm_admin_jwt';
+const DEFAULT_ENV = {
+    key: 'current',
+    label: '当前环境',
+    apiBase: '/api/v1/model-manage',
+    loginUrl: '/api/v1/auth/login'
+};
+
+function normalizeEnvironments(list) {
+    const source = (Array.isArray(list) && list.length) ? list : [DEFAULT_ENV];
+    return source.map((env, i) => {
+        const apiBase = String(env.apiBase || DEFAULT_ENV.apiBase).replace(/\/+$/, '');
+        let loginUrl = env.loginUrl;
+        if (!loginUrl) {
+            try {
+                loginUrl = new URL(apiBase, location.href).origin + '/api/v1/auth/login';
+            } catch (e) {
+                loginUrl = DEFAULT_ENV.loginUrl;
+            }
+        }
+        return {
+            key: env.key || ('env' + i),
+            label: env.label || env.key || ('环境' + (i + 1)),
+            apiBase,
+            loginUrl
+        };
+    });
+}
+
+const ENVIRONMENTS = normalizeEnvironments(window.LLM_CONSOLE_ENVIRONMENTS);
+const SECTION_META = {
+    usage:     { title: '用量信息', desc: '查看平台 LLM 调用量与 Token 消耗' },
+    calls:     { title: '调用记录', desc: '按用户、模型与日期检索每一次 LLM 调用明细' },
+    providers: { title: '大模型提供商管理', desc: '统一维护提供商名称、API 地址与 API Key' },
+    models:    { title: '大模型管理', desc: '管理转发到各提供商的模型配置' },
+    integration: { title: '接入说明', desc: '接口地址、请求头、集群路由与调用示例' }
+};
+const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}';
+
+let _adminToken = null;
+let _env = ENVIRONMENTS[0].key;
+let API_BASE = ENVIRONMENTS[0].apiBase;
+let _currentSection = 'usage';
+let _usageDays = 7;
+let _providers = null;          // 提供商缓存
+let _companyCache = null;       // companlist.txt 厂商列表缓存
+let _companyTimer = null;       // 厂商远程模糊搜索防抖
+let _editingModel = null;       // 当前编辑的模型（历史数据回退判定 OpenRouter 用）
+let _modelCache = [];           // 当前提供商可用模型
+let _callsPage = 1;
+let _callsPageSize = 20;
+let _callsTotal = 0;
+let _loaded = {};               // 各分区是否已加载
+
+// ==================== 鉴权 ====================
+function checkAuth() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+        _adminToken = saved;
+        document.getElementById('authOverlay').classList.remove('active');
+        document.getElementById('btnLock').style.display = '';
+        return true;
+    }
+    showAuthOverlay();
+    return false;
+}
+
+function showAuthOverlay() {
+    document.getElementById('authOverlay').classList.add('active');
+    document.getElementById('authUsername').value = '';
+    document.getElementById('authPassword').value = '';
+    document.getElementById('authError').textContent = '';
+    document.getElementById('btnLock').style.display = 'none';
+    setTimeout(() => document.getElementById('authUsername').focus(), 100);
+}
+
+function currentEnv() {
+    return ENVIRONMENTS.find(e => e.key === _env) || ENVIRONMENTS[0];
+}
+
+function getLoginUrl() {
+    return currentEnv().loginUrl;
+}
+
+function renderEnvironments() {
+    const block = document.getElementById('envBlock');
+    const wrap = document.getElementById('envSwitch');
+    // 单环境时隐藏切换区，保持通用控制台简洁
+    if (ENVIRONMENTS.length <= 1) {
+        block.style.display = 'none';
+        return;
+    }
+    block.style.display = '';
+    wrap.innerHTML = ENVIRONMENTS.map(env => `
+        <button class="env-btn ${env.key === _env ? 'active' : ''}" data-env="${esc(env.key)}"
+                onclick="switchEnv('${esc(env.key)}')">
+            <span class="env-dot"></span><span>${esc(env.label)}</span>
+        </button>
+    `).join('');
+}
+
+async function doUnlock() {
+    const username = document.getElementById('authUsername').value.trim();
+    const pwd = document.getElementById('authPassword').value.trim();
+    const errEl = document.getElementById('authError');
+    const btn = document.getElementById('authBtn');
+
+    if (!username) { errEl.textContent = '请输入管理员账号'; return; }
+    if (!pwd) { errEl.textContent = '请输入密码'; return; }
+
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    errEl.textContent = '';
+
+    try {
+        const res = await fetch(getLoginUrl(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password: pwd })
+        });
+        const result = await res.json();
+        if (result?.data?.success) {
+            _adminToken = result.data.token;
+            localStorage.setItem(STORAGE_KEY, _adminToken);
+            document.getElementById('authOverlay').classList.remove('active');
+            document.getElementById('btnLock').style.display = '';
+            toast('登录成功，欢迎 ' + (result.data.user?.userName || username));
+            _loaded = {};
+            _providers = null;
+            preloadProviders();
+            loadCurrentSection(true);
+        } else {
+            errEl.textContent = result?.data?.message || '登录失败';
+            document.getElementById('authPassword').value = '';
+            document.getElementById('authPassword').focus();
+        }
+    } catch (e) {
+        errEl.textContent = '网络错误，请检查连接';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '登 录';
+    }
+}
+
+function lockPage() {
+    _adminToken = null;
+    localStorage.removeItem(STORAGE_KEY);
+    showAuthOverlay();
+    _loaded = {};
+    document.getElementById('modelBody').innerHTML = '';
+    document.getElementById('providerBody').innerHTML = '';
+    document.getElementById('callBody').innerHTML = '';
+}
+
+// ==================== API ====================
+async function api(method, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (_adminToken) headers['Authorization'] = 'Bearer ' + _adminToken;
+    const opts = { method, headers };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API_BASE + path, opts);
+    if (res.status === 401) {
+        showAuthOverlay();
+        throw new Error('Unauthorized');
+    }
+    if (res.status === 403) {
+        toast('当前账号无管理员权限', false);
+        throw new Error('Forbidden');
+    }
+    return res.json();
+}
+
+// ==================== 通用工具 ====================
+function toast(msg, ok = true) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + (ok ? 'toast-success' : 'toast-error');
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2600);
+}
+
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function copyCode(btn) {
+    const box = btn.closest('.code-box');
+    const text = box ? box.querySelector('.code-block').textContent : '';
+    if (!text) return;
+    const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); toast('已复制'); }
+        catch (e) { toast('复制失败', false); }
+        ta.remove();
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => toast('已复制')).catch(fallback);
+    } else {
+        fallback();
+    }
+}
+
+function fmt(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+function fmtCompact(n) {
+    n = Number(n || 0);
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(n);
+}
+
+function fmtDateTime(s) {
+    if (!s) return '-';
+    return String(s).replace('T', ' ').substring(0, 19);
+}
+
+function maskKey(key) {
+    if (!key) return '-';
+    if (key.length <= 10) return '****';
+    return key.substring(0, 4) + '****' + key.substring(key.length - 4);
+}
+
+function splitList(value) { return (value || '').split(',').filter(Boolean); }
+
+// ==================== 分区切换 ====================
+function switchSection(name) {
+    _currentSection = name;
+    document.querySelectorAll('.nav-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.section === name);
+    });
+    document.querySelectorAll('.section').forEach(el => {
+        el.classList.toggle('active', el.id === 'sec-' + name);
+    });
+    document.getElementById('pageTitle').textContent = SECTION_META[name].title;
+    document.getElementById('pageDesc').textContent = SECTION_META[name].desc;
+    loadCurrentSection();
+}
+
+function loadCurrentSection(force) {
+    const map = {
+        usage: loadUsage,
+        calls: loadCalls,
+        providers: loadProviders,
+        models: loadModels,
+        integration: null
+    };
+    const loader = map[_currentSection];
+    if (loader) loader(force);
+}
+
+function refreshSection() {
+    _loaded = {};
+    _providers = null;
+    _companyCache = null;
+    preloadProviders();
+    loadCurrentSection(true);
+}
+
+function switchEnv(envKey) {
+    if (envKey === _env) return;
+    const env = ENVIRONMENTS.find(e => e.key === envKey);
+    if (!env) return;
+    _env = env.key;
+    API_BASE = env.apiBase;
+    renderEnvironments();
+    _providers = null;
+    _companyCache = null;
+    _modelCache = [];
+    _loaded = {};
+    _callsPage = 1;
+    if (checkAuth()) {
+        preloadProviders();
+        loadCurrentSection(true);
+    }
+}
+
+// ==================== 用量信息 ====================
+function setUsageRange(days, btn) {
+    _usageDays = days;
+    document.querySelectorAll('#usageRange button').forEach(el => el.classList.remove('active'));
+    btn.classList.add('active');
+    loadUsage(true);
+}
+
+async function loadUsage() {
+    const chartEl = document.getElementById('usageChart');
+    chartEl.innerHTML = '<div class="chart-empty">加载中...</div>';
+    try {
+        const result = await api('GET', '/usage/overview?days=' + _usageDays);
+        const data = result?.data || {};
+        renderUsage(data.summary || {}, data.daily || [], data.byModel || []);
+        _loaded.usage = true;
+    } catch (e) {
+        chartEl.innerHTML = '<div class="chart-empty">加载失败</div>';
+    }
+}
+
+function renderUsage(summary, daily, byModel) {
+    document.getElementById('statCalls').textContent = fmt(summary.calls);
+    document.getElementById('statCallsSub').textContent =
+        '日均 ' + fmt(summary.days ? Math.round(summary.calls / summary.days) : 0) + ' 次 · 近 ' + (summary.days || _usageDays) + ' 天';
+    document.getElementById('statTokens').textContent = fmt(summary.totalTokens);
+    document.getElementById('statTokensSub').textContent =
+        '输入 ' + fmtCompact(summary.promptTokens) + ' · 输出 ' + fmtCompact(summary.completionTokens);
+    document.getElementById('statPrompt').textContent = fmt(summary.promptTokens);
+    document.getElementById('statCacheSub').textContent = '缓存命中 ' + fmt(summary.cacheHitTokens);
+    document.getElementById('statUsers').textContent = fmt(summary.users);
+    document.getElementById('usageRangeText').textContent =
+        summary.startDate && summary.endDate ? summary.startDate + ' ~ ' + summary.endDate : '';
+
+    renderUsageChart(daily);
+    renderModelUsage(byModel);
+}
+
+function renderUsageChart(daily) {
+    const chartEl = document.getElementById('usageChart');
+    if (!daily.length || daily.every(d => !d.totalTokens)) {
+        chartEl.innerHTML = '<div class="chart-empty">暂无 Token 消耗数据</div>';
+        return;
+    }
+    const max = Math.max(...daily.map(d => d.totalTokens || 0), 1);
+    const labelEvery = Math.ceil(daily.length / 10);
+
+    chartEl.innerHTML = daily.map((d, i) => {
+        const total = d.totalTokens || 0;
+        const h = total ? Math.max(3, (total / max) * 100) : 0;
+        const prompt = d.promptTokens || 0;
+        const completion = d.completionTokens || 0;
+        const promptRatio = total ? (prompt / total) * 100 : 0;
+        const completionRatio = total ? (completion / total) * 100 : 0;
+        const label = d.date ? d.date.substring(5) : '';
+        const showLabel = i % labelEvery === 0 || i === daily.length - 1;
+        const tip = d.date + '\n调用 ' + fmt(d.calls) + ' 次\n输入 ' + fmt(prompt)
+            + ' · 输出 ' + fmt(completion) + '\n总 Token ' + fmt(total);
+        return `
+            <div class="chart-col" title="${esc(tip)}">
+                <div class="chart-stack" style="height:${h}%">
+                    ${prompt ? `<div class="chart-seg input" style="height:${promptRatio}%"></div>` : ''}
+                    ${completion ? `<div class="chart-seg output" style="height:${completionRatio}%"></div>` : ''}
+                </div>
+                <span class="chart-x">${showLabel ? esc(label) : ''}</span>
+            </div>`;
+    }).join('');
+}
+
+function renderModelUsage(byModel) {
+    const body = document.getElementById('usageModelBody');
+    const mini = document.getElementById('modelMiniList');
+    const total = byModel.reduce((sum, m) => sum + (m.totalTokens || 0), 0);
+
+    if (!byModel.length) {
+        body.innerHTML = '<tr><td colspan="6"><div class="empty">暂无数据</div></td></tr>';
+        mini.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+    }
+
+    body.innerHTML = byModel.map(m => {
+        const share = total ? ((m.totalTokens || 0) / total * 100).toFixed(1) : '0.0';
+        return `
+            <tr>
+                <td><span class="ellipsis" title="${esc(m.model)}"><strong>${esc(m.model)}</strong></span></td>
+                <td class="num">${fmt(m.calls)}</td>
+                <td class="num">${fmt(m.promptTokens)}</td>
+                <td class="num">${fmt(m.completionTokens)}</td>
+                <td class="num">${fmt(m.totalTokens)}</td>
+                <td class="num">${share}%</td>
+            </tr>`;
+    }).join('');
+
+    mini.innerHTML = byModel.slice(0, 6).map((m, i) => {
+        const share = total ? ((m.totalTokens || 0) / total * 100) : 0;
+        return `
+            <div class="mini-row">
+                <span class="mini-rank">${i + 1}</span>
+                <div class="mini-main">
+                    <div class="mini-model" title="${esc(m.model)}">${esc(m.model)}</div>
+                    <div class="mini-bar"><span style="width:${Math.max(share, 2)}%"></span></div>
+                </div>
+                <div class="mini-value">${fmtCompact(m.totalTokens)}<small>${share.toFixed(1)}%</small></div>
+            </div>`;
+    }).join('');
+}
+
+// ==================== 调用记录 ====================
+function purposeLabel(p) {
+    if (!p || p === 'main') return '<span class="tag tag-blue">主模型</span>';
+    if (p === 'async') return '<span class="tag tag-gray">异步通用</span>';
+    const m = /^async(\d+)$/.exec(p);
+    if (m) return `<span class="tag tag-purple">异步 ${m[1]}</span>`;
+    return `<span class="tag tag-gray">${esc(p)}</span>`;
+}
+
+async function loadCalls() {
+    const tbody = document.getElementById('callBody');
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载中...</div></td></tr>';
+    const params = new URLSearchParams();
+    params.set('page', _callsPage);
+    params.set('page_size', _callsPageSize);
+    const userId = document.getElementById('callUser').value.trim();
+    const model = document.getElementById('callModel').value.trim();
+    const purpose = document.getElementById('callPurpose').value;
+    const start = document.getElementById('callStart').value;
+    const end = document.getElementById('callEnd').value;
+    if (userId) params.set('user_id', userId);
+    if (model) params.set('model', model);
+    if (purpose) params.set('purpose', purpose);
+    if (start) params.set('start_date', start);
+    if (end) params.set('end_date', end);
+
+    try {
+        const result = await api('GET', '/calls?' + params.toString());
+        const list = result?.data?.list || [];
+        _callsTotal = result?.data?.total || 0;
+        renderCalls(list);
+        renderCallPagination();
+        _loaded.calls = true;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function renderCalls(list) {
+    const tbody = document.getElementById('callBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">暂无调用记录</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(r => `
+        <tr>
+            <td class="muted num" style="white-space:nowrap">${esc(fmtDateTime(r.createdAt))}</td>
+            <td><span class="mono" style="font-size:12px">${esc(r.userId || '匿名')}</span></td>
+            <td><span class="ellipsis" title="${esc(r.model)}">${esc(r.model || '-')}</span></td>
+            <td>${purposeLabel(r.purpose)}</td>
+            <td>${r.isStream === 1 || r.isStream === '1' ? '<span class="tag tag-green">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
+            <td class="num">${fmt(r.promptTokens)}</td>
+            <td class="num">${fmt(r.completionTokens)}</td>
+            <td class="num">${fmt(r.cacheHitTokens)}</td>
+            <td class="num"><strong>${fmt(r.totalTokens)}</strong></td>
+        </tr>
+    `).join('');
+}
+
+function renderCallPagination() {
+    const pages = Math.max(1, Math.ceil(_callsTotal / _callsPageSize));
+    document.getElementById('callPageInfo').textContent = '共 ' + fmt(_callsTotal) + ' 条记录';
+    document.getElementById('callPageNum').textContent = _callsPage + ' / ' + pages;
+    document.getElementById('callPrev').disabled = _callsPage <= 1;
+    document.getElementById('callNext').disabled = _callsPage >= pages;
+}
+
+function gotoCallPage(delta) {
+    const pages = Math.max(1, Math.ceil(_callsTotal / _callsPageSize));
+    const next = _callsPage + delta;
+    if (next < 1 || next > pages) return;
+    _callsPage = next;
+    loadCalls();
+}
+
+function searchCalls() {
+    _callsPage = 1;
+    loadCalls();
+}
+
+function resetCallFilters() {
+    document.getElementById('callUser').value = '';
+    document.getElementById('callModel').value = '';
+    document.getElementById('callPurpose').value = '';
+    document.getElementById('callStart').value = '';
+    document.getElementById('callEnd').value = '';
+    _callsPage = 1;
+    loadCalls();
+}
+
+// ==================== 提供商管理 ====================
+async function preloadProviders() {
+    try {
+        const result = await api('GET', '/providers');
+        _providers = result?.data?.list || [];
+    } catch (e) {
+        _providers = [];
+    }
+    renderProviderFilter();
+    return _providers;
+}
+
+function renderProviderFilter() {
+    const select = document.getElementById('filterProvider');
+    const current = select.value;
+    select.innerHTML = '<option value="">全部提供商</option>' + (_providers || []).map(p =>
+        `<option value="${esc(p.providerId)}">${esc(p.providerName)}</option>`
+    ).join('');
+    select.value = current;
+}
+
+async function loadProviders(force) {
+    const tbody = document.getElementById('providerBody');
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty">加载中...</div></td></tr>';
+    try {
+        const result = await api('GET', '/providers');
+        _providers = result?.data?.list || [];
+        renderProviders(_providers);
+        renderProviderFilter();
+        _loaded.providers = true;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="7"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function renderProviders(list) {
+    const tbody = document.getElementById('providerBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="7"><div class="empty">暂无提供商，请先新增一个</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(p => `
+        <tr>
+            <td><strong>${esc(p.providerName)}</strong></td>
+            <td><span class="ellipsis mono muted" title="${esc(p.apiUrl)}">${esc(p.apiUrl)}</span></td>
+            <td><span class="mono muted" style="font-size:12px">${esc(maskKey(p.apiKey))}</span></td>
+            <td>${p.modelCount ? `<span class="tag tag-blue">${p.modelCount} 个</span>` : '<span class="tag tag-gray">0 个</span>'}</td>
+            <td><span class="ellipsis muted" title="${esc(p.remarks)}">${esc(p.remarks || '-')}</span></td>
+            <td class="muted num" style="white-space:nowrap">${esc(fmtDateTime(p.updatedAt || p.createdAt))}</td>
+            <td>
+                <div class="actions" style="justify-content:flex-end">
+                    <button class="btn btn-link btn-sm" onclick="openProviderModal('${esc(p.providerId)}')">编辑</button>
+                    <button class="btn btn-link danger btn-sm" onclick="deleteProvider('${esc(p.providerId)}', '${esc(p.providerName)}')">删除</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openProviderModal(providerId) {
+    const modal = document.getElementById('providerOverlay');
+    document.getElementById('providerEditId').value = providerId || '';
+    document.getElementById('providerModalTitle').textContent = providerId ? '编辑提供商' : '新增提供商';
+    document.getElementById('providerSubmitBtn').textContent = providerId ? '保存修改' : '确认新增';
+
+    const p = providerId ? (_providers || []).find(x => x.providerId === providerId) : null;
+    document.getElementById('pName').value = p ? (p.providerName || '') : '';
+    document.getElementById('pUrl').value = p ? (p.apiUrl || '') : '';
+    document.getElementById('pKey').value = p ? (p.apiKey || '') : '';
+    document.getElementById('pRemarks').value = p ? (p.remarks || '') : '';
+    closeCompanyCombo();
+
+    modal.classList.add('active');
+    // 新增时自动聚焦并展开建议；编辑时不打断表单，点击名称框再展开
+    if (!providerId) {
+        setTimeout(() => document.getElementById('pName').focus(), 80);
+    }
+}
+
+function closeProviderModal() {
+    closeCompanyCombo();
+    document.getElementById('providerOverlay').classList.remove('active');
+}
+
+// ==================== 提供商名称：companlist.txt 实时下拉 ====================
+async function loadAllCompanies() {
+    try {
+        const result = await api('GET', '/company-search?name=');
+        _companyCache = result?.data?.matches || [];
+    } catch (e) {
+        _companyCache = [];
+    }
+    return _companyCache;
+}
+
+function filterCompanies(query) {
+    if (!_companyCache) return [];
+    const q = (query || '').toLowerCase();
+    if (!q) return _companyCache;
+    return _companyCache.filter(c =>
+        (c.name || '').toLowerCase().includes(q) || (c.domain || '').toLowerCase().includes(q)
+    );
+}
+
+function showCompanyCombo(matches) {
+    const listEl = document.getElementById('providerComboList');
+    const arrow = document.getElementById('pNameArrow');
+    if (!matches || !matches.length) {
+        listEl.innerHTML = '<div class="combo-empty">没有匹配的提供商</div>';
+        listEl._matches = [];
+    } else {
+        const show = matches.slice(0, 50);
+        listEl.innerHTML = show.map((c, i) => `
+            <div class="combo-item company-item" onmousedown="selectCompany(${i})">
+                <span class="ci-name">${esc(c.name)}</span>
+                <span class="ci-meta">${esc(c.domain || '')}</span>
+            </div>
+        `).join('');
+        listEl._matches = show;
+    }
+    listEl.classList.add('active');
+    arrow.classList.add('open');
+}
+
+function closeCompanyCombo() {
+    document.getElementById('providerComboList').classList.remove('active');
+    document.getElementById('pNameArrow').classList.remove('open');
+}
+
+async function onProviderNameFocus() {
+    const input = document.getElementById('pName');
+    if (_companyCache === null) {
+        await loadAllCompanies();
+        if (document.activeElement !== input) return;
+    }
+    showCompanyCombo(filterCompanies(input.value.trim()));
+}
+
+function onProviderNameInput() {
+    const input = document.getElementById('pName');
+    const value = input.value.trim();
+    closeCompanyCombo();
+
+    if (_companyCache === null) {
+        loadAllCompanies().then(() => {
+            if (document.activeElement === input) {
+                showCompanyCombo(filterCompanies(input.value.trim()));
+            }
+        });
+        return;
+    }
+
+    const localMatches = filterCompanies(value);
+    if (localMatches.length > 0) {
+        showCompanyCombo(localMatches);
+        return;
+    }
+
+    // 本地无命中时走后端模糊搜索（最多 5 条），输入过短则直接关闭
+    clearTimeout(_companyTimer);
+    if (value.length < 2) return;
+    _companyTimer = setTimeout(async () => {
+        if (document.getElementById('pName').value.trim() !== value) return;
+        try {
+            const result = await api('GET', '/company-search?name=' + encodeURIComponent(value));
+            showCompanyCombo(result?.data?.matches || []);
+        } catch (e) {
+            closeCompanyCombo();
+        }
+    }, 260);
+}
+
+function onProviderNameBlur() {
+    setTimeout(closeCompanyCombo, 180);
+}
+
+function onProviderNameKeydown(event) {
+    if (event.key === 'Enter') {
+        const listEl = document.getElementById('providerComboList');
+        const matches = listEl._matches || [];
+        if (listEl.classList.contains('active') && matches.length > 0) {
+            event.preventDefault();
+            selectCompany(0);
+        }
+    } else if (event.key === 'Escape') {
+        closeCompanyCombo();
+    }
+}
+
+function selectCompany(idx) {
+    const listEl = document.getElementById('providerComboList');
+    const company = (listEl._matches || [])[idx];
+    if (!company) return;
+
+    document.getElementById('pName').value = company.name || '';
+    const urlEl = document.getElementById('pUrl');
+    if (!urlEl.value.trim() && company.domain) {
+        let url = company.domain.trim();
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        urlEl.value = url;
+    }
+    closeCompanyCombo();
+}
+
+async function submitProvider() {
+    const editId = document.getElementById('providerEditId').value;
+    const body = {
+        provider_name: document.getElementById('pName').value.trim(),
+        api_url: document.getElementById('pUrl').value.trim(),
+        api_key: document.getElementById('pKey').value.trim(),
+        remarks: document.getElementById('pRemarks').value.trim() || null
+    };
+    if (!body.provider_name || !body.api_url || !body.api_key) {
+        toast('请填写提供商名称、API 地址与 API Key', false);
+        return;
+    }
+
+    const btn = document.getElementById('providerSubmitBtn');
+    btn.disabled = true;
+    try {
+        const result = editId
+            ? await api('PUT', '/providers/' + editId, body)
+            : await api('POST', '/providers', body);
+        if (result.code === 200 || result.code === 201) {
+            toast(editId ? '更新成功，关联模型配置已同步' : '新增成功');
+            closeProviderModal();
+            _providers = null;
+            await preloadProviders();
+            loadProviders(true);
+            _loaded.models = false;
+        } else {
+            toast(result.message || '操作失败', false);
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function deleteProvider(providerId, name) {
+    if (!confirm(`确认删除提供商 "${name}"？`)) return;
+    const result = await api('DELETE', '/providers/' + providerId);
+    if (result.code === 200) {
+        toast('删除成功');
+        _providers = null;
+        await preloadProviders();
+        loadProviders(true);
+        _loaded.models = false;
+    } else {
+        toast(result.message || '删除失败', false);
+    }
+}
+
+// ==================== 大模型管理 ====================
+async function loadModels() {
+    if (_providers === null) await preloadProviders();
+    const tbody = document.getElementById('modelBody');
+    tbody.innerHTML = '<tr><td colspan="11"><div class="empty">加载中...</div></td></tr>';
+
+    const params = new URLSearchParams();
+    const name = document.getElementById('filterModelName').value.trim();
+    const providerId = document.getElementById('filterProvider').value;
+    const type = document.getElementById('filterType').value;
+    const using = document.getElementById('filterUsing').value;
+    const asyncType = document.getElementById('filterAsyncType').value;
+    if (name) params.set('ai_model_name', name);
+    if (providerId) params.set('provider_id', providerId);
+    if (type) params.set('ai_model_type', type);
+    if (using) params.set('is_using', using);
+    if (asyncType) params.set('async_type', asyncType);
+
+    try {
+        const result = await api('GET', '/list' + (params.toString() ? '?' + params.toString() : ''));
+        renderModels(result?.data?.list || []);
+        _loaded.models = true;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="11"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function providerNameOf(m) {
+    const p = (_providers || []).find(x => x.providerId === m.providerId);
+    return p ? p.providerName : (m.comName || '');
+}
+
+function renderModels(list) {
+    const tbody = document.getElementById('modelBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="11"><div class="empty">暂无模型，请点击「新增模型」添加</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(m => {
+        const providerName = providerNameOf(m);
+        const providerCell = m.providerId
+            ? `<span class="tag tag-blue">${esc(providerName)}</span>`
+            : `<span class="tag tag-gray" title="历史数据未关联提供商">${esc(providerName || '未关联')}</span>`;
+        return `
+        <tr>
+            <td><span class="ellipsis" title="${esc(m.aiModelName)}"><strong>${esc(m.aiModelName)}</strong></span></td>
+            <td>${providerCell}</td>
+            <td>${m.aiModelType === '1' ? '<span class="tag tag-orange">语音</span>' : '<span class="tag tag-purple">文本</span>'}</td>
+            <td>
+                <label class="toggle" onclick="toggleUsing('${esc(m.aiModelId)}', this, event)">
+                    <input type="checkbox" ${m.isUsing === '1' ? 'checked' : ''}>
+                    <span class="toggle-track"></span>
+                </label>
+            </td>
+            <td>${thinkTag(m.isThink)}</td>
+            <td>${m.isStream === '1' ? '<span class="tag tag-green">是</span>' : '<span class="tag tag-gray">否</span>'}</td>
+            <td>${clusterTag(m.asyncType)}</td>
+            <td>${paramTags(m)}</td>
+            <td>${providerTag(m.extraConfig)}</td>
+            <td><span class="ellipsis muted" title="${esc(m.remarks)}">${esc(m.remarks || '-')}</span></td>
+            <td>
+                <div class="actions" style="justify-content:flex-end">
+                    <button class="btn btn-link btn-sm" onclick="openModelModal('${esc(m.aiModelId)}')">编辑</button>
+                    <button class="btn btn-link danger btn-sm" onclick="deleteModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function asyncTypeLabel(value) {
+    const m = /^async([1-9])$/.exec(value || '');
+    return m ? '集群' + m[1] : '集群1';
+}
+
+// 集群标签：1..9 各自固定颜色，便于列表中快速扫视
+function clusterTag(value) {
+    const m = /^async([1-9])$/.exec(value || '');
+    const n = m ? m[1] : '1';
+    return `<span class="tag tag-c${n}">${esc(asyncTypeLabel(value))}</span>`;
+}
+
+// 列表「大模型参数」列：紧凑展示已配置的采样/输出参数
+function paramTags(m) {
+    const items = [];
+    if (m.temperature !== null && m.temperature !== undefined) items.push(['T', 'temperature', m.temperature]);
+    if (m.topP !== null && m.topP !== undefined) items.push(['P', 'top_p', m.topP]);
+    if (m.topK !== null && m.topK !== undefined) items.push(['K', 'top_k', m.topK]);
+    if (m.maxTokens !== null && m.maxTokens !== undefined) items.push(['MT', 'max_tokens', m.maxTokens]);
+    if (!items.length) return '<span class="tag tag-gray">默认</span>';
+    return items.map(([short, full, value]) =>
+        `<span class="tag tag-blue" title="${full} = ${esc(value)}">${short} ${esc(value)}</span>`
+    ).join(' ');
+}
+
+function thinkTag(v) {
+    if (v === '1') return '<span class="tag tag-orange">开启</span>';
+    if (v === '2') return '<span class="tag tag-gray">关闭</span>';
+    return '<span class="tag tag-gray">跟随</span>';
+}
+
+function parseExtraConfig(extraConfig) {
+    if (!extraConfig) return null;
+    try { return JSON.parse(extraConfig); } catch (e) { return null; }
+}
+
+function providerTag(extraConfig) {
+    const obj = parseExtraConfig(extraConfig);
+    return obj && obj.provider
+        ? '<span class="tag tag-blue">自定义</span>'
+        : '<span class="tag tag-gray">默认</span>';
+}
+
+async function toggleUsing(id, labelEl, event) {
+    if (event) event.preventDefault();
+    const checkbox = labelEl.querySelector('input');
+    const intended = !checkbox.checked;
+    const newVal = intended ? '1' : '0';
+    labelEl.classList.add('loading');
+    const result = await api('PUT', '/' + id, { is_using: newVal });
+    labelEl.classList.remove('loading');
+    if (result.code === 200) {
+        checkbox.checked = intended;
+        toast(newVal === '1' ? '已启用' : '已停用');
+    } else {
+        toast(result.message || '更新失败', false);
+    }
+}
+
+async function deleteModel(id, name) {
+    if (!confirm(`确认删除模型 "${name}"？此操作不可撤销。`)) return;
+    const result = await api('DELETE', '/' + id);
+    if (result.code === 200) {
+        toast('删除成功');
+        loadModels();
+        _providers = null;
+        preloadProviders();
+    } else {
+        toast(result.message || '删除失败', false);
+    }
+}
+
+// ==================== 模型表单 ====================
+async function openModelModal(modelId) {
+    if (_providers === null) await preloadProviders();
+    if (!_providers || !_providers.length) {
+        toast('请先在大模型提供商管理中新增提供商', false);
+        switchSection('providers');
+        return;
+    }
+
+    const model = modelId ? await fetchModelDetail(modelId) : null;
+    if (modelId && !model) return;
+
+    _editingModel = model;
+    document.getElementById('modelEditId').value = modelId || '';
+    document.getElementById('modelModalTitle').textContent = modelId ? '编辑模型' : '新增模型';
+    document.getElementById('modelSubmitBtn').textContent = modelId ? '保存修改' : '确认新增';
+
+    // 提供商下拉
+    const providerSelect = document.getElementById('mProvider');
+    providerSelect.innerHTML = '<option value="">请选择提供商</option>' + _providers.map(p =>
+        `<option value="${esc(p.providerId)}">${esc(p.providerName)}</option>`
+    ).join('');
+
+    _modelCache = [];
+    closeModelCombo();
+
+    if (model) {
+        // 优先按 providerId 关联；历史数据按运营商名称回退匹配
+        let selected = model.providerId || '';
+        if (!selected) {
+            const matched = _providers.find(p => p.providerName === model.comName);
+            selected = matched ? matched.providerId : '';
+        }
+        providerSelect.value = selected;
+
+        document.getElementById('mModelName').value = model.aiModelName || '';
+        setRadio('mType', model.aiModelType);
+        setRadio('mUsing', model.isUsing);
+        document.getElementById('mThink').value = model.isThink || '0';
+        setRadio('mStream', model.isStream);
+        document.getElementById('mAsyncType').value = model.asyncType || 'async1';
+        const hasValue = v => (v !== null && v !== undefined) ? v : '';
+        document.getElementById('mTemperature').value = hasValue(model.temperature);
+        document.getElementById('mTopP').value = hasValue(model.topP);
+        document.getElementById('mTopK').value = hasValue(model.topK);
+        document.getElementById('mMaxTokens').value = hasValue(model.maxTokens);
+        syncSamplingConflict();
+        document.getElementById('mExtraConfig').value = model.extraConfig || '';
+        document.getElementById('mProviderConfig').value = providerConfigFromExtra(model.extraConfig);
+        document.getElementById('mRemarks').value = model.remarks || '';
+        document.getElementById('modelLoadHint').textContent =
+            selected ? '已关联提供商，点击模型名称可加载模型列表' : '历史模型未关联提供商，保存时保留原有地址与密钥';
+        updateProviderParamState();
+        if (selected) loadModelsForProvider(selected, true);
+    } else {
+        providerSelect.value = '';
+        clearModelForm();
+    }
+
+    document.getElementById('modelOverlay').classList.add('active');
+}
+
+async function fetchModelDetail(id) {
+    const result = await api('GET', '/' + id);
+    if (!result?.data) {
+        toast(result?.message || '获取模型详情失败', false);
+        return null;
+    }
+    return result.data;
+}
+
+function closeModelModal() {
+    closeModelCombo();
+    _editingModel = null;
+    document.getElementById('modelOverlay').classList.remove('active');
+}
+
+function clearModelForm() {
+    document.getElementById('mModelName').value = '';
+    _modelCache = [];
+    setRadio('mType', '0');
+    setRadio('mUsing', '1');
+    document.getElementById('mThink').value = '0';
+    setRadio('mStream', '1');
+    document.getElementById('mAsyncType').value = 'async1';
+    document.getElementById('mTemperature').value = '';
+    document.getElementById('mTopP').value = '';
+    document.getElementById('mTopK').value = '';
+    document.getElementById('mMaxTokens').value = '';
+    syncSamplingConflict();
+    document.getElementById('mExtraConfig').value = '';
+    document.getElementById('mProviderConfig').value = '';
+    document.getElementById('mRemarks').value = '';
+    document.getElementById('modelLoadHint').textContent = '选择提供商后自动拉取可用模型';
+    updateProviderParamState();
+}
+
+function setRadio(name, value) {
+    document.getElementsByName(name).forEach(r => { r.checked = r.value === (value || '0'); });
+}
+
+function getRadio(name) {
+    let result = '0';
+    document.getElementsByName(name).forEach(r => { if (r.checked) result = r.value; });
+    return result;
+}
+
+// temperature 与 top_p 互斥：任一有值即清空并禁用另一个
+function onSamplingInput(source) {
+    const tempEl = document.getElementById('mTemperature');
+    const topPEl = document.getElementById('mTopP');
+    if (source === 'temperature') {
+        if (tempEl.value.trim()) {
+            topPEl.value = '';
+            topPEl.disabled = true;
+        } else {
+            topPEl.disabled = false;
+        }
+    } else {
+        if (topPEl.value.trim()) {
+            tempEl.value = '';
+            tempEl.disabled = true;
+        } else {
+            tempEl.disabled = false;
+        }
+    }
+}
+
+// 打开编辑/重置表单时按已有值恢复互斥状态；两者都有时 temperature 优先
+function syncSamplingConflict() {
+    const tempEl = document.getElementById('mTemperature');
+    const topPEl = document.getElementById('mTopP');
+    tempEl.disabled = false;
+    topPEl.disabled = false;
+    if (tempEl.value.trim()) {
+        topPEl.value = '';
+        topPEl.disabled = true;
+    } else if (topPEl.value.trim()) {
+        tempEl.value = '';
+        tempEl.disabled = true;
+    }
+}
+
+function selectedProvider() {
+    const id = document.getElementById('mProvider').value;
+    return (_providers || []).find(p => p.providerId === id) || null;
+}
+
+function isOpenRouterProvider() {
+    const p = selectedProvider();
+    // 未关联提供商的历史模型：回退用模型自身记录的名称/地址判定
+    const name = ((p && p.providerName) || (_editingModel && _editingModel.comName) || '').toLowerCase();
+    const url = ((p && p.apiUrl) || (_editingModel && _editingModel.comUrl) || '').toLowerCase();
+    return name.includes('openrouter') || url.includes('openrouter');
+}
+
+function updateProviderParamState() {
+    const input = document.getElementById('mProviderConfig');
+    const hint = document.getElementById('providerParamHint');
+    if (isOpenRouterProvider()) {
+        input.disabled = false;
+        hint.textContent = '当前为 OpenRouter，提供商参数会写入请求体 provider 字段。';
+        if (!input.value.trim()) input.value = OPENROUTER_DEFAULT_PROVIDER;
+    } else {
+        input.disabled = true;
+        input.value = '';
+        hint.textContent = '仅 OpenRouter 提供商会启用该参数。';
+    }
+}
+
+async function onProviderChange() {
+    const providerId = document.getElementById('mProvider').value;
+    updateProviderParamState();
+    _modelCache = [];
+    closeModelCombo();
+    if (!providerId) {
+        document.getElementById('modelLoadHint').textContent = '选择提供商后自动拉取可用模型';
+        return;
+    }
+    await loadModelsForProvider(providerId, false);
+}
+
+async function loadModelsForProvider(providerId, silent) {
+    const provider = (_providers || []).find(p => p.providerId === providerId);
+    if (!provider) return;
+    const hint = document.getElementById('modelLoadHint');
+    hint.textContent = '正在拉取 ' + provider.providerName + ' 的模型列表...';
+    try {
+        const result = await api('POST', '/fetch-models', {
+            com_url: provider.apiUrl,
+            api_key: provider.apiKey
+        });
+        if (result.code === 200) {
+            _modelCache = result?.data?.models || [];
+            hint.textContent = '已加载 ' + _modelCache.length + ' 个可用模型，点击模型名称选择';
+            // 编辑场景静默加载，不主动弹下拉，避免遮挡表单
+            if (!silent) {
+                const input = document.getElementById('mModelName');
+                showModelCombo(_modelCache);
+                input.focus();
+            }
+        } else {
+            hint.textContent = '模型列表拉取失败，可手动输入模型名称';
+            if (!silent) toast(result.message || '拉取模型列表失败', false);
+        }
+    } catch (e) {
+        hint.textContent = '模型列表拉取失败，可手动输入模型名称';
+    }
+}
+
+// 模型名称下拉
+function showModelCombo(models) {
+    const listEl = document.getElementById('modelComboList');
+    const arrow = document.getElementById('modelArrow');
+    if (!models || !models.length) {
+        listEl.innerHTML = '<div class="combo-empty">没有匹配的模型</div>';
+        listEl.classList.add('active');
+        arrow.classList.add('open');
+        return;
+    }
+    const show = models.slice(0, 50);
+    listEl.innerHTML = show.map((m, i) =>
+        `<div class="combo-item" onmousedown="selectModel(${i})">${esc(m)}</div>`
+    ).join('');
+    listEl._models = show;
+    listEl.classList.add('active');
+    arrow.classList.add('open');
+}
+
+function closeModelCombo() {
+    document.getElementById('modelComboList').classList.remove('active');
+    document.getElementById('modelArrow').classList.remove('open');
+}
+
+function onModelNameInput() {
+    const value = document.getElementById('mModelName').value.trim();
+    closeModelCombo();
+    if (!value) {
+        if (_modelCache.length) showModelCombo(_modelCache);
+        return;
+    }
+    const q = value.toLowerCase();
+    const filtered = _modelCache.filter(m => m.toLowerCase().includes(q));
+    if (_modelCache.length) showModelCombo(filtered);
+}
+
+function onModelNameFocus() {
+    if (_modelCache.length) showModelCombo(_modelCache);
+}
+
+function onModelNameBlur() {
+    setTimeout(closeModelCombo, 180);
+}
+
+function selectModel(idx) {
+    const listEl = document.getElementById('modelComboList');
+    const models = listEl._models || [];
+    const m = models[idx];
+    if (m) document.getElementById('mModelName').value = m;
+    closeModelCombo();
+}
+
+// 合并额外配置与提供商参数：提供商参数写入 extra_config.provider
+function buildExtraConfig() {
+    const extraRaw = document.getElementById('mExtraConfig').value.trim();
+    const providerInput = document.getElementById('mProviderConfig');
+    const providerRaw = providerInput.disabled ? '' : providerInput.value.trim();
+
+    let extraObj = null;
+    if (extraRaw) {
+        try { extraObj = JSON.parse(extraRaw); }
+        catch (e) { toast('额外配置必须是有效的 JSON', false); throw new Error('invalid extra_config'); }
+    }
+
+    let providerObj = null;
+    if (providerRaw) {
+        try { providerObj = JSON.parse(providerRaw); }
+        catch (e) { toast('提供商参数必须是有效的 JSON', false); throw new Error('invalid provider_config'); }
+    }
+
+    if (providerObj) {
+        if (!extraObj || typeof extraObj !== 'object' || Array.isArray(extraObj)) extraObj = {};
+        extraObj.provider = providerObj;
+    } else if (extraObj && Object.prototype.hasOwnProperty.call(extraObj, 'provider')) {
+        delete extraObj.provider;
+        if (Object.keys(extraObj).length === 0) extraObj = null;
+    }
+    return extraObj ? JSON.stringify(extraObj) : null;
+}
+
+function providerConfigFromExtra(extraConfig) {
+    const obj = parseExtraConfig(extraConfig);
+    return obj && obj.provider ? JSON.stringify(obj.provider, null, 2) : '';
+}
+
+async function submitModel() {
+    const editId = document.getElementById('modelEditId').value;
+    const providerId = document.getElementById('mProvider').value;
+    const modelName = document.getElementById('mModelName').value.trim();
+    const tempRaw = document.getElementById('mTemperature').value.trim();
+    const topPRaw = document.getElementById('mTopP').value.trim();
+    const topKRaw = document.getElementById('mTopK').value.trim();
+    const maxTokensRaw = document.getElementById('mMaxTokens').value.trim();
+
+    if (!modelName) { toast('请填写模型名称', false); return; }
+    if (!editId && !providerId) { toast('请选择大模型提供商', false); return; }
+    if (tempRaw && topPRaw) {
+        toast('temperature 与 top_p 只能填写一个', false); return;
+    }
+    if (tempRaw && (isNaN(parseFloat(tempRaw)) || parseFloat(tempRaw) < 0 || parseFloat(tempRaw) > 2)) {
+        toast('temperature 需在 0~2 之间', false); return;
+    }
+    if (topPRaw && (isNaN(parseFloat(topPRaw)) || parseFloat(topPRaw) < 0 || parseFloat(topPRaw) > 1)) {
+        toast('top_p 需在 0~1 之间', false); return;
+    }
+    if (topKRaw && (isNaN(parseInt(topKRaw, 10)) || parseInt(topKRaw, 10) < 1)) {
+        toast('top_k 需为正整数', false); return;
+    }
+    if (maxTokensRaw && (isNaN(parseInt(maxTokensRaw, 10)) || parseInt(maxTokensRaw, 10) < 1)) {
+        toast('max_tokens 需为正整数', false); return;
+    }
+
+    let extraConfig;
+    try { extraConfig = buildExtraConfig(); } catch (e) { return; }
+
+    const body = {
+        ai_model_name: modelName,
+        ai_model_type: getRadio('mType'),
+        is_using: getRadio('mUsing'),
+        is_think: document.getElementById('mThink').value,
+        is_stream: getRadio('mStream'),
+        async_type: document.getElementById('mAsyncType').value,
+        temperature: tempRaw ? parseFloat(tempRaw) : null,
+        top_p: topPRaw ? parseFloat(topPRaw) : null,
+        top_k: topKRaw ? parseInt(topKRaw, 10) : null,
+        max_tokens: maxTokensRaw ? parseInt(maxTokensRaw, 10) : null,
+        extra_config: extraConfig,
+        remarks: document.getElementById('mRemarks').value.trim() || null
+    };
+    // 编辑未关联的历史模型时，不传 provider_id 以保留原有地址与密钥
+    if (providerId) body.provider_id = providerId;
+
+    const btn = document.getElementById('modelSubmitBtn');
+    btn.disabled = true;
+    try {
+        const result = editId
+            ? await api('PUT', '/' + editId, body)
+            : await api('POST', '/', body);
+        if (result.code === 200 || result.code === 201) {
+            toast(editId ? '更新成功' : '新增成功');
+            closeModelModal();
+            loadModels();
+            _providers = null;
+            preloadProviders();
+        } else {
+            toast(result.message || '操作失败', false);
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// 点击外部关闭下拉
+document.addEventListener('click', function (e) {
+    if (!e.target.closest('#modelOverlay .combo')) closeModelCombo();
+    if (!e.target.closest('#providerOverlay .combo')) closeCompanyCombo();
+});
+
+// ==================== 初始化 ====================
+renderEnvironments();
+if (checkAuth()) {
+    preloadProviders();
+    loadCurrentSection();
+}
+</script>
+</body>
+</html>

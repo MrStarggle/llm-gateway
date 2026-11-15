@@ -1,0 +1,10 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.idea
+temp
+nginx_migration_backup
+*.log

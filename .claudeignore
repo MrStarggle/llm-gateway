@@ -1,0 +1,40 @@
+# ==============================================
+# Claude Code 忽略扫描配置 - FastAPI 专用
+# 自动忽略虚拟环境、缓存、打包产物、运行时文件
+# ==============================================
+
+# 1. Python 虚拟环境（必须忽略）
+.venv/
+venv/
+
+# 2. Python 编译缓存文件（必须忽略）
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 3. 版本控制 / 编辑器配置
+.git/
+.idea/        # PyCharm
+.vscode/      # VS Code
+
+# 4. 前端依赖（如有）
+node_modules/
+
+# 5. 项目打包编译产物
+build/
+dist/
+*.egg-info/
+
+# 6. 你的项目运行时文件（核心新增）
+logs/
+uploads/
+avatars/
+
+# 7. 日志与临时文件
+*.log
+*.tmp
+temp/
+
+# 8. Claude 自身配置（避免循环扫描）
+.claude/

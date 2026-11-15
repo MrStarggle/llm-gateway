@@ -1,0 +1,20 @@
+"""用户 Token 消耗记录表（每次 LLM 调用一行明细）"""
+from sqlalchemy import Column, String, Integer, Date, TIMESTAMP, func
+from app.config.database import Base
+
+
+class UserTokenInfo(Base):
+    __tablename__ = "user_token_info"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="自增主键")
+    user_id = Column(String(64), nullable=False, index=True, comment="用户ID")
+    model = Column(String(128), nullable=False, server_default="", comment="模型名称")
+    purpose = Column(String(16), nullable=False, server_default="main", comment="用途: main/async/async1..async13（异步分路）")
+    is_stream = Column(Integer, nullable=False, server_default="0", comment="是否流式: 1是0否")
+    prompt_tokens = Column(Integer, nullable=False, server_default="0", comment="输入token")
+    completion_tokens = Column(Integer, nullable=False, server_default="0", comment="输出token")
+    total_tokens = Column(Integer, nullable=False, server_default="0", comment="总token")
+    prompt_cache_hit_tokens = Column(Integer, nullable=False, server_default="0", comment="缓存命中token")
+    prompt_cache_miss_tokens = Column(Integer, nullable=False, server_default="0", comment="缓存未命中token")
+    record_date = Column(Date, nullable=False, comment="记录日期（按天聚合用）")
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), comment="创建时间")
