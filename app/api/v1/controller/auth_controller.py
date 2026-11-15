@@ -5,7 +5,7 @@
 """
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter
@@ -41,7 +41,7 @@ async def login(body: LoginRequest) -> dict[str, Any]:
         logger.warning("[AdminAuth] 登录失败: username=%s", username)
         return ResponseFactory.ok(data={"success": False, "message": "账号或密码错误"})
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     token = jwt.encode(
         {
             "user_id": "admin",

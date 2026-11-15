@@ -139,6 +139,16 @@ _SQLITE_COLUMN_MIGRATIONS = [
     ("model_manage_info", "price_currency", "VARCHAR(8) NOT NULL DEFAULT 'USD'", None),
     ("model_manage_info", "price_source", "VARCHAR(16) NULL", None),
     ("model_manage_info", "price_updated_at", "DATETIME NULL", None),
+    # 项目归属与请求追踪
+    ("user_token_info", "project_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_project_id ON user_token_info (project_id)"),
+    ("user_token_info", "token_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_token_id ON user_token_info (token_id)"),
+    ("user_token_info", "channel_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_channel_id ON user_token_info (channel_id)"),
+    ("user_token_info", "request_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_request_id ON user_token_info (request_id)"),
+    ("user_token_info", "retry_count", "INTEGER NOT NULL DEFAULT 0", None),
 ]
 
 
@@ -202,6 +212,11 @@ async def init_database():
         from app.models.model_manage_info import ModelManageInfo  # noqa: F401
         from app.models.user_daily_quota import UserDailyQuota  # noqa: F401
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
+        from app.models.project_info import ProjectInfo  # noqa: F401
+        from app.models.project_token_info import ProjectTokenInfo  # noqa: F401
+        from app.models.project_usage_daily import ProjectUsageDaily  # noqa: F401
+        from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401
+        from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
@@ -258,6 +273,16 @@ async def run_migrations():
         "ALTER TABLE user_token_info ADD COLUMN estimated_cost DECIMAL(18,8) NULL COMMENT '本次调用成本（估算或上游返回）'",
         "ALTER TABLE user_token_info ADD COLUMN cost_currency VARCHAR(8) NULL COMMENT '成本币种'",
         "ALTER TABLE user_token_info ADD COLUMN cost_source VARCHAR(16) NULL COMMENT '成本来源：estimate/provider'",
+        # 项目归属与请求追踪
+        "ALTER TABLE user_token_info ADD COLUMN project_id VARCHAR(64) NULL COMMENT '项目ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_project_id (project_id)",
+        "ALTER TABLE user_token_info ADD COLUMN token_id VARCHAR(64) NULL COMMENT '项目Token ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_token_id (token_id)",
+        "ALTER TABLE user_token_info ADD COLUMN channel_id VARCHAR(64) NULL COMMENT '实际服务的模型ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_channel_id (channel_id)",
+        "ALTER TABLE user_token_info ADD COLUMN request_id VARCHAR(64) NULL COMMENT '请求ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_request_id (request_id)",
+        "ALTER TABLE user_token_info ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '网关内部重试次数'",
     ]
     async with engine.begin() as conn:
         for sql in migrations:
