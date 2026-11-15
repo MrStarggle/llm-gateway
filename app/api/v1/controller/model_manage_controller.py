@@ -14,6 +14,7 @@ from app.utils.response import ResponseFactory
 from app.utils.admin_auth import verify_admin_token
 from app.api.v1.controller.call_manage_controller import (
     _fetch_models_from_upstream,
+    _validate_url,
     FetchModelsBody as FetchModelsRequest,
 )
 
@@ -84,6 +85,11 @@ async def fetch_models(body: FetchModelsRequest):
     从运营商 API 拉取可用模型列表
     POST body: { com_url, api_key }
     """
+    try:
+        _validate_url(body.com_url.rstrip("/") + "/models")
+    except Exception:
+        return ResponseFactory.bad_request(message="API 地址不合法（仅支持 HTTPS 公网地址）")
+
     models, error = await _fetch_models_from_upstream(body.com_url, body.api_key)
 
     if not models and error:

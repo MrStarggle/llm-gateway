@@ -13,16 +13,19 @@
 - **用量统计**：Token 用量、调用记录、按模型分布
 - **管理台**：提供商、模型、集群、用量与接入说明一体化
 - **单管理员模式**：环境变量配置账号，JWT 登录，无需额外用户系统
+- **零配置存储**：默认 SQLite，开箱即用；需要多实例时可切换 MySQL
 
 ## 快速开始（Docker）
 
 ```bash
 cp .env.example .env
-# 修改 .env 中的 MySQL 密码、管理员账号、JWT_SECRET_KEY
+# 修改 .env 中的管理员账号与 JWT_SECRET_KEY
 docker compose up -d --build
 ```
 
 打开 <http://localhost:9010/>，使用 `.env` 中的管理员账号登录。
+
+默认使用 SQLite，数据库文件持久化在 `gateway_data` 卷中，无需额外数据库服务。
 
 ## 本地运行
 
@@ -31,23 +34,40 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# 准备 MySQL 数据库（默认库名 llm_gateway），并填写 .env
 
 uvicorn main:app --host 0.0.0.0 --port 9010
 ```
 
-应用启动时会自动建表并执行幂等迁移。
+应用启动时会自动建表，数据库默认写入 `data/gateway.db`。
+
+> SQLite 适合单机单进程部署。不要同时启动多个 uvicorn worker 或多个实例共享同一个
+> SQLite 文件；需要多实例/高并发写入时，请切换到 MySQL。
 
 ## 配置
 
 | 环境变量 | 说明 | 默认 |
 |---|---|---|
-| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接 | localhost / 3306 / root / 空 / `llm_gateway` |
+| `DB_BACKEND` | `sqlite` 或 `mysql` | `sqlite` |
+| `SQLITE_PATH` | SQLite 数据文件路径 | `data/gateway.db` |
+| `DATABASE_URL` | 显式 SQLAlchemy 异步连接串，优先级最高 | 空 |
+| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接（`DB_BACKEND=mysql` 时使用） | localhost / 3306 / root / 空 / `llm_gateway` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号 | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | `dev-only-change-me` |
 | `PORT` | 服务端口 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时输出请求体调试日志 | `0` |
 | `CORS_ORIGINS` | 跨域管理台来源，逗号分隔 | 空（同源即可） |
+
+### 切换到 MySQL
+
+```bash
+DB_BACKEND=mysql
+MYSQL_HOST=127.0.0.1
+MYSQL_USER=root
+MYSQL_PASSWORD=your-password
+MYSQL_DATABASE=llm_gateway
+```
+
+MySQL 模式会在启动时执行 `app/db/schema.sql` 与幂等迁移。
 
 ## 调用
 
@@ -81,7 +101,7 @@ curl -X POST "http://localhost:9010/router/call-manage/chat/completions" \
 app/
   api/v1/controller/   管理端、模型、调用转发接口
   config/              数据库与运行配置
-  db/schema.sql        MySQL 建表脚本
+  db/schema.sql        MySQL 建表脚本（SQLite 由 ORM 自动建表）
   models/              提供商、模型、用量 ORM
   services/            模型选择/轮询、用量统计、提供商管理
   utils/               JWT、雪花 ID、统一响应

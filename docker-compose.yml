@@ -1,34 +1,15 @@
 services:
-  db:
-    image: mysql:8.0
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-change-me}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-llm_gateway}
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_PASSWORD:-change-me}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   gateway:
     build: .
     env_file:
       - .env
     environment:
-      MYSQL_HOST: db
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
+      DB_BACKEND: ${DB_BACKEND:-sqlite}
     ports:
       - "9010:9010"
-    depends_on:
-      db:
-        condition: service_healthy
+    volumes:
+      - gateway_data:/app/data
     restart: unless-stopped
 
 volumes:
-  mysql_data:
+  gateway_data:

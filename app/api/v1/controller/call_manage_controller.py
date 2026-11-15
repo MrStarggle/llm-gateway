@@ -894,6 +894,7 @@ async def chat_completions(
 
         async def event_generator() -> AsyncGenerator[bytes, None]:
             nonlocal client, resp
+            upstream_ok = False
             total_bytes = 0
             accumulated_chunks: list[bytes] = []
             accumulated_content: list[str] = []  # 收集 delta.content
@@ -921,6 +922,7 @@ async def chat_completions(
                         f"{error_body.decode('utf-8', errors='replace')}\n\n"
                     ).encode("utf-8")
                     return
+                upstream_ok = True
                 # 逐 chunk 累加日志用正文/usage——按行缓冲，细节见 _ingest_sse_chunk
                 sse_buf = b""
                 async for chunk in _stream_aiter_bytes(resp):
@@ -979,8 +981,9 @@ async def chat_completions(
                         model_name, reasoning_text,
                     )
 
-                # 记录 token 用量（非关键路径，失败不影响响应）
-                if user_id and accumulated_usage:
+                # 记录调用次数与 token 用量（非关键路径，失败不影响响应）。
+                # 上游未必返回 usage，但调用次数必须记，否则流式请求在用量统计中会缺失。
+                if user_id and upstream_ok:
                     try:
                         await call_manage_service.record_token_usage(
                             db, user_id, model_name, llm_purpose,

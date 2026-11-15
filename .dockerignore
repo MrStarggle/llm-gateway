@@ -5,6 +5,7 @@ __pycache__
 *.pyc
 .env
 .idea
+data
 temp
 nginx_migration_backup
 *.log

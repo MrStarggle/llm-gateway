@@ -11,6 +11,7 @@ import logging
 from datetime import date
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_manage_info import ModelManageInfo
@@ -84,36 +85,39 @@ async def incr_today_call_count(db: AsyncSession, user_id: str) -> None:
     """当日调用计数 +1（user_daily_quota 表，与 token 用量明细分离）.
 
     计数用于管理台「调用次数」统计。非关键路径：失败仅记日志（fail-open，
-    少计一次比打断已完成的 LLM 响应更可接受）。并发下唯一键冲突按更新重试一次。
+    少计一次比打断已完成的 LLM 响应更可接受）。
+
+    使用数据库原子自增而非“先读再写”，避免并发请求丢计数；首次插入并发
+    撞唯一键时回滚并按自增更新重试一次。
     """
     today = date.today()
+    where = (
+        UserDailyQuota.user_id == user_id,
+        UserDailyQuota.quota_date == today,
+    )
     try:
-        row = (await db.execute(
-            select(UserDailyQuota).where(
-                UserDailyQuota.user_id == user_id,
-                UserDailyQuota.quota_date == today,
-            )
-        )).scalar_one_or_none()
-        if row is not None:
-            row.call_count = (row.call_count or 0) + 1
-        else:
+        result = await db.execute(
+            update(UserDailyQuota).where(*where)
+            .values(call_count=UserDailyQuota.call_count + 1)
+        )
+        if result.rowcount == 0:
             db.add(UserDailyQuota(user_id=user_id, quota_date=today, call_count=1))
         await db.commit()
-    except Exception:
+    except IntegrityError:
+        # 并发首次插入撞唯一键：另一事务已建好当天行，改为原子自增
         await db.rollback()
         try:
-            result = await db.execute(
-                update(UserDailyQuota)
-                .where(UserDailyQuota.user_id == user_id,
-                       UserDailyQuota.quota_date == today)
+            await db.execute(
+                update(UserDailyQuota).where(*where)
                 .values(call_count=UserDailyQuota.call_count + 1)
             )
-            if result.rowcount == 0:
-                db.add(UserDailyQuota(user_id=user_id, quota_date=today, call_count=1))
             await db.commit()
         except Exception as e:
             await db.rollback()
             logger.error("限额计数失败（fail-open 放行）: user_id=%s error=%s", user_id, e)
+    except Exception as e:
+        await db.rollback()
+        logger.error("限额计数失败（fail-open 放行）: user_id=%s error=%s", user_id, e)
 
 
 async def record_token_usage(
