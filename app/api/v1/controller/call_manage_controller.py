@@ -1472,6 +1472,81 @@ async def chat_completions(
 
 # ── 模型列表获取 ──
 
+@router.get("/models")
+async def list_models_openai(
+    db: AsyncSession = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+):
+    """OpenAI 兼容的模型列表（供内置聊天页和第三方客户端使用）.
+
+    只返回使用中的文本模型。传入 ``sk-gw-`` 项目 Token 时按 Token 的
+    模型白名单过滤；启用 ``GATEWAY_TOKEN_REQUIRED`` 时未传 Token 返回 401。
+    同一模型名出现在多个集群时合并为一条，``x_clusters`` 列出可用集群。
+    """
+    raw_token = _extract_bearer(authorization)
+    identity = None
+    if raw_token.startswith(project_manage_service.TOKEN_PREFIX):
+        try:
+            identity = await project_manage_service.resolve_gateway_token(db, raw_token)
+        except project_manage_service.GatewayAuthError as e:
+            return gateway_error_response(e.status_code, e.message, code=e.code)
+    elif project_manage_service.GATEWAY_TOKEN_REQUIRED:
+        return gateway_error_response(401, "Missing API key", code="missing_api_key")
+
+    models = await call_manage_service.get_active_models(db)
+    models = [m for m in models if (m.ai_model_type or "0") != "1"]
+    if identity is not None:
+        models = project_manage_service.filter_allowed_models(identity, models)
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for model in models:
+        name = model.ai_model_name
+        entry = grouped.get(name)
+        if entry is None:
+            created = 0
+            if model.created_at is not None:
+                try:
+                    created = int(model.created_at.timestamp())
+                except (AttributeError, ValueError):
+                    created = 0
+            entry = grouped[name] = {
+                "id": name,
+                "object": "model",
+                "created": created,
+                "owned_by": model.com_name or "starggle",
+                "x_clusters": set(),
+                "x_pricing": None,
+            }
+        entry["x_clusters"].add(model.async_type)
+        if entry["x_pricing"] is None and (
+            model.input_price_per_1m is not None or model.output_price_per_1m is not None
+        ):
+            entry["x_pricing"] = {
+                "input_per_1m": (
+                    float(model.input_price_per_1m)
+                    if model.input_price_per_1m is not None else None
+                ),
+                "output_per_1m": (
+                    float(model.output_price_per_1m)
+                    if model.output_price_per_1m is not None else None
+                ),
+                "currency": model.price_currency or "USD",
+            }
+
+    data = []
+    for name in sorted(grouped):
+        entry = grouped[name]
+        clusters = sorted(entry["x_clusters"])
+        entry["x_clusters"] = clusters
+        entry["x_async_type"] = clusters[0] if clusters else "async1"
+        data.append(entry)
+
+    return JSONResponse(
+        content={"object": "list", "data": data},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/models")
 async def fetch_models(body: FetchModelsBody):
     """从运营商 API 拉取可用模型列表.

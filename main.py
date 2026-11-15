@@ -130,6 +130,17 @@ async def user_manage_page():
     )
 
 
+@app.get("/chat", response_class=HTMLResponse)
+@app.get("/chat/", response_class=HTMLResponse)
+async def chat_page():
+    """内置聊天页：会话保存在浏览器本地，网关只负责转发和记账."""
+    html_path = BASE_DIR / "templates" / "chat.html"
+    return HTMLResponse(
+        html_path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 if __name__ == "__main__":
     import asyncio
 

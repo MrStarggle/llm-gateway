@@ -16,6 +16,7 @@
 - **模型级参数覆盖**：`temperature` / `top_p` / `top_k` / `max_tokens` 可按模型覆盖
 - **用量统计**：Token 用量、调用记录、按项目/模型/功能码/用户分组
 - **业务能力**：提示词占位符注入、会员积分日限额、共享 JWT、用户/订单管理
+- **内置聊天页**：`/chat` 提供离线 Chatbox 风格界面，会话保存在浏览器本地，支持流式、停止、重新生成、导入/导出
 - **管理台**：提供商、模型、集群、项目、密钥、渠道健康与接入说明一体化
 
 ## 快速开始（Docker）
@@ -91,6 +92,8 @@ resp = client.chat.completions.create(
 )
 ```
 
+模型列表：`GET /v1/models` 返回使用中的文本模型；传入 `sk-gw-` 项目 Token 时按 Token 的模型白名单过滤。响应中的 `x_clusters` 可直接作为 `X-Async-Type` 使用。
+
 请求头：
 
 | 请求头 | 取值 | 说明 |
@@ -106,6 +109,16 @@ resp = client.chat.completions.create(
 
 > 不带 `sk-gw-` 前缀的 `Authorization` 保持旧语义：主链可覆盖上游 Key，异步链使用服务端 Key。
 > 带 `X-User-Id` 且未使用项目 Token 时，仍按会员等级校验每日调用次数。
+
+## 内置聊天页
+
+启动后打开 <http://127.0.0.1:9010/chat>，或从管理台左侧「对话」进入。这是一个轻量的
+Chatbox 风格客户端，直接调用网关的 `/v1/chat/completions`：
+
+- 会话和消息保存在浏览器 IndexedDB（不可用时回退 localStorage），不写入网关数据库
+- 支持流式输出、停止生成、重新生成、模型切换、系统提示词、导入/导出 JSON
+- 业务模式启用 `GATEWAY_TOKEN_REQUIRED=1` 或使用项目配额时，在「设置」中填写 `sk-gw-...`
+- 需要完整客户端时，Chatbox / Open WebUI / Cherry Studio 等可直接使用 `base_url=http://host:9010/v1` 和项目 Token
 
 ## 项目与配额
 
@@ -150,6 +163,8 @@ app/
   utils/               JWT、雪花 ID、统一响应、OpenAI 错误格式
 templates/model_manage.html   管理台
 templates/user_manage.html    用户 / 订单管理
+templates/chat.html           内置聊天页
+static/chat/                  聊天页 CSS / JS
 main.py                       FastAPI 入口
 ```
 
