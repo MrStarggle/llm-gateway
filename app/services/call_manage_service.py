@@ -13,6 +13,7 @@ from datetime import date
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.membership import DEFAULT_LEVEL
 from app.models.model_manage_info import ModelManageInfo
 from app.models.user_daily_quota import UserDailyQuota
 from app.models.user_token_info import UserTokenInfo
@@ -153,5 +154,51 @@ async def record_token_usage(
     except Exception as e:
         await db.rollback()
         logger.error("记录 token 用量失败: user_id=%s error=%s", user_id, e)
+
+
+async def get_effective_membership(
+    db: AsyncSession,
+    user_id: str,
+) -> str:
+    """查询用户实际生效的会员等级（积分制：余额即等级，未知用户回落 free）.
+
+    Args:
+        db: 数据库会话.
+        user_id: 用户ID.
+
+    Returns:
+        "free" / "silver" / "gold" / "diamond".
+    """
+    from app.config.membership import tier_of_balance
+    from app.models.user_info import UserInfo
+
+    if not user_id:
+        return DEFAULT_LEVEL
+
+    result = await db.execute(
+        select(UserInfo.point_balance).where(UserInfo.user_id == user_id)
+    )
+    row = result.first()
+    if not row:
+        return DEFAULT_LEVEL
+
+    return tier_of_balance(row[0])["level"]
+
+
+async def get_today_call_count(db: AsyncSession, user_id: str) -> int:
+    """查询用户今日 LLM 调用次数（限额口径，读 user_daily_quota 计数表）.
+
+    与 token 用量明细（user_token_info）分离：重置额度只清计数表，
+    明细保留供统计。无记录返回 0.
+    """
+    stmt = (
+        select(UserDailyQuota.call_count)
+        .where(
+            UserDailyQuota.user_id == user_id,
+            UserDailyQuota.quota_date == date.today(),
+        )
+    )
+    result = await db.execute(stmt)
+    return int(result.scalar() or 0)
 
 

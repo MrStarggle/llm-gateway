@@ -1,18 +1,17 @@
-"""管理端登录接口
-
-使用环境变量配置的管理员账号（ADMIN_USERNAME / ADMIN_PASSWORD）换取 JWT，
-不依赖任何业务用户表，方便独立部署。
-"""
+"""管理端登录接口（复用 StarggleCom 用户表与 JWT 密钥）"""
 import logging
-import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from jose import jwt
-from pydantic import BaseModel
+import bcrypt
 
-from app.utils.admin_auth import ADMIN_PASSWORD, ADMIN_USERNAME, ALGORITHM, SECRET_KEY
+from app.config.database import get_db
+from app.utils.admin_auth import SECRET_KEY, ALGORITHM
 from app.utils.response import ResponseFactory
 
 logger = logging.getLogger(__name__)
@@ -23,29 +22,54 @@ ACCESS_TOKEN_EXPIRE_HOURS = 24 * 7  # 7 天
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., max_length=128)
+
+
+# 账号不存在时也执行一次 bcrypt，避免通过响应耗时枚举已注册邮箱
+_DUMMY_BCRYPT_HASH = "$2b$12$HKyaKyENJmOqaKgzj35so.yaznwbl9K4PVDfoMe3oJYWkPhM66z7q"
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """验证 bcrypt 哈希密码"""
+    pwd_bytes = password.encode("utf-8")[:72]
+    try:
+        return bcrypt.checkpw(pwd_bytes, hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 @router.post("/login")
-async def login(body: LoginRequest) -> dict[str, Any]:
-    """管理员登录：账号 + 密码 → JWT"""
-    username = body.username.strip()
-    if not username or not body.password:
-        return ResponseFactory.bad_request(message="账号和密码不能为空")
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """
+    管理端登录：邮箱 + 密码 → JWT
 
-    # compare_digest 两边都会执行，避免通过耗时差异推测账号/密码
-    username_ok = secrets.compare_digest(username, ADMIN_USERNAME)
-    password_ok = secrets.compare_digest(body.password, ADMIN_PASSWORD)
-    if not (username_ok and password_ok):
-        logger.warning("[AdminAuth] 登录失败: username=%s", username)
-        return ResponseFactory.ok(data={"success": False, "message": "账号或密码错误"})
+    与 StarggleCom /auth/verifyPassword 使用相同的用户表和 JWT 密钥，
+    两边的 token 可以互通。
+    """
+    from app.models.user_info import UserInfo
 
+    email = body.email.strip().replace("＠", "@")
+    if not email or not body.password:
+        return ResponseFactory.bad_request(message="邮箱和密码不能为空")
+
+    result = await db.execute(select(UserInfo).where(UserInfo.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        _verify_password(body.password, _DUMMY_BCRYPT_HASH)
+        return ResponseFactory.ok(data={"success": False, "message": "邮箱或密码错误"})
+
+    if not _verify_password(body.password, user.password):
+        return ResponseFactory.ok(data={"success": False, "message": "邮箱或密码错误"})
+
+    # 签发 JWT（payload 格式与 StarggleCom 一致）
     now = datetime.utcnow()
     token = jwt.encode(
         {
-            "user_id": "admin",
-            "user_name": ADMIN_USERNAME,
+            "user_id": user.user_id,
+            "email": user.email,
+            "user_name": user.user_name,
             "iat": now,
             "exp": now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
         },
@@ -53,15 +77,15 @@ async def login(body: LoginRequest) -> dict[str, Any]:
         algorithm=ALGORITHM,
     )
 
-    logger.info("[AdminAuth] 登录成功: username=%s", ADMIN_USERNAME)
     return ResponseFactory.ok(
         data={
             "success": True,
             "message": "登录成功",
             "token": token,
             "user": {
-                "userId": "admin",
-                "userName": ADMIN_USERNAME,
+                "userId": user.user_id,
+                "userName": user.user_name,
+                "email": user.email,
             },
         }
     )

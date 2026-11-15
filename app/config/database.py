@@ -17,7 +17,7 @@ MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "llm_gateway")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "starggle_main")
 
 DATABASE_URL = (
     f"mysql+aiomysql://{MYSQL_USER}:{quote_plus(MYSQL_PASSWORD)}"
@@ -77,7 +77,9 @@ async def init_database():
         # 1. ORM 模型建表
         from app.models.llm_provider_info import LlmProviderInfo  # noqa: F401
         from app.models.model_manage_info import ModelManageInfo  # noqa: F401
+        from app.models.order_info import OrderInfo  # noqa: F401
         from app.models.user_daily_quota import UserDailyQuota  # noqa: F401
+        from app.models.user_info import UserInfo  # noqa: F401
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -141,6 +143,15 @@ async def run_migrations():
         "ALTER TABLE model_manage_info ADD COLUMN max_tokens INT NULL COMMENT '覆盖请求体max_tokens；NULL=不覆盖（沿用客户端值）'",
         # 思考模式语义：0跟随请求/1强制开启/2强制关闭
         "ALTER TABLE model_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '思考模式：0跟随请求，1强制开启，2强制关闭'",
+        # 积分制：积分余额（共享表，列由本系统负责迁移，重复执行自动跳过）
+        "ALTER TABLE user_info ADD COLUMN point_balance INT NOT NULL DEFAULT 0 COMMENT '积分余额（余额即会员等级）'",
+        # 会员系统：到期时间 / 订阅ID / 套餐ID（与 StarggleCom 迁移保持一致）
+        "ALTER TABLE user_info ADD COLUMN membership_expire_at DATETIME NULL COMMENT '会员到期时间（免费档为空）'",
+        "ALTER TABLE user_info ADD COLUMN subscription_id VARCHAR(128) NULL COMMENT '支付渠道订阅ID（Creem 用）'",
+        "ALTER TABLE user_info ADD COLUMN plan_id VARCHAR(64) NULL COMMENT '支付渠道套餐ID（Creem 用）'",
+        "ALTER TABLE user_info MODIFY COLUMN membership_level VARCHAR(32) NULL DEFAULT 'free' COMMENT '会员等级: free/plus/pro'",
+        "UPDATE user_info SET membership_level = 'free' WHERE membership_level = '1'",
+        "UPDATE user_info SET membership_level = 'plus' WHERE membership_level = '2'",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

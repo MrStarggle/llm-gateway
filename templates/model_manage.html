@@ -421,6 +421,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4"/><path d="M15 2v4"/><path d="M9 18v4"/><path d="M15 18v4"/><path d="M2 9h4"/><path d="M2 15h4"/><path d="M18 9h4"/><path d="M18 15h4"/></svg>
                 <span>大模型管理</span>
             </button>
+            <a class="nav-item" href="/user-manage" style="text-decoration:none">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span>用户管理</span>
+            </a>
             <div class="nav-divider"></div>
             <button class="nav-item" data-section="integration" onclick="switchSection('integration')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -1062,8 +1066,8 @@ print(resp.json())</pre>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
         </div>
         <h2>管理员登录</h2>
-        <p class="auth-hint" id="authHint">使用管理员账号登录</p>
-        <input class="input" type="text" id="authUsername" placeholder="管理员账号"
+        <p class="auth-hint" id="authHint">使用 Starggle 账号登录（与官网同一套账号）</p>
+        <input class="input" type="email" id="authEmail" placeholder="邮箱"
                onkeydown="if(event.key==='Enter')document.getElementById('authPassword').focus()">
         <input class="input" type="password" id="authPassword" placeholder="密码"
                onkeydown="if(event.key==='Enter')doUnlock()">
@@ -1148,11 +1152,11 @@ function checkAuth() {
 
 function showAuthOverlay() {
     document.getElementById('authOverlay').classList.add('active');
-    document.getElementById('authUsername').value = '';
+    document.getElementById('authEmail').value = '';
     document.getElementById('authPassword').value = '';
     document.getElementById('authError').textContent = '';
     document.getElementById('btnLock').style.display = 'none';
-    setTimeout(() => document.getElementById('authUsername').focus(), 100);
+    setTimeout(() => document.getElementById('authEmail').focus(), 100);
 }
 
 function currentEnv() {
@@ -1181,12 +1185,12 @@ function renderEnvironments() {
 }
 
 async function doUnlock() {
-    const username = document.getElementById('authUsername').value.trim();
+    const email = document.getElementById('authEmail').value.trim();
     const pwd = document.getElementById('authPassword').value.trim();
     const errEl = document.getElementById('authError');
     const btn = document.getElementById('authBtn');
 
-    if (!username) { errEl.textContent = '请输入管理员账号'; return; }
+    if (!email) { errEl.textContent = '请输入邮箱'; return; }
     if (!pwd) { errEl.textContent = '请输入密码'; return; }
 
     btn.disabled = true;
@@ -1197,7 +1201,7 @@ async function doUnlock() {
         const res = await fetch(getLoginUrl(), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password: pwd })
+            body: JSON.stringify({ email, password: pwd })
         });
         const result = await res.json();
         if (result?.data?.success) {
@@ -1205,7 +1209,7 @@ async function doUnlock() {
             localStorage.setItem(STORAGE_KEY, _adminToken);
             document.getElementById('authOverlay').classList.remove('active');
             document.getElementById('btnLock').style.display = '';
-            toast('登录成功，欢迎 ' + (result.data.user?.userName || username));
+            toast('登录成功，欢迎 ' + (result.data.user?.userName || email));
             _loaded = {};
             _providers = null;
             preloadProviders();

@@ -11,15 +11,16 @@ from app.schemas.llm_provider import ProviderCreate, ProviderUpdate
 from app.schemas.model_manage import ModelManageCreate, ModelManageUpdate, ModelManageQuery
 from app.services import llm_provider_service, model_manage_service, usage_manage_service
 from app.utils.response import ResponseFactory
-from app.utils.admin_auth import verify_admin_token
+from app.utils.admin_auth import require_admin_user
 from app.api.v1.controller.call_manage_controller import (
     _fetch_models_from_upstream,
+    _validate_url,
     FetchModelsBody as FetchModelsRequest,
 )
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(verify_admin_token)])
+router = APIRouter(dependencies=[Depends(require_admin_user)])
 
 # companlist.txt 文件路径
 _companlist_path = Path(__file__).parent.parent.parent.parent.parent / "companlist.txt"
@@ -84,6 +85,11 @@ async def fetch_models(body: FetchModelsRequest):
     从运营商 API 拉取可用模型列表
     POST body: { com_url, api_key }
     """
+    try:
+        _validate_url(body.com_url.rstrip("/") + "/models")
+    except Exception:
+        return ResponseFactory.bad_request(message="API 地址不合法（仅支持 HTTPS 公网地址）")
+
     models, error = await _fetch_models_from_upstream(body.com_url, body.api_key)
 
     if not models and error:

@@ -76,6 +76,12 @@ async def manage_page():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/user-manage", response_class=HTMLResponse)
+async def user_manage_page():
+    html_path = BASE_DIR / "templates" / "user_manage.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     import asyncio
 

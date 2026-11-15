@@ -6,6 +6,7 @@
 """
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncGenerator, Optional
@@ -18,8 +19,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.config.membership import get_tier
 from app.services import call_manage_service
 from app.utils.response import ResponseFactory
+from propmt import (
+    ai_sec_propmt,
+    core_list,
+    core_propmt_deepseek,
+    core_propmt_one,
+    core_propmt_two,
+    super_core_propmt,
+    user_active_propmt,
+    user_core_propmt,
+    user_default_propmt,
+    user_sec_propmt,
+    user_top_propmt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +76,54 @@ _GLM_THINKING_EFFORT = "low"      # GLM-5.2+ 的思考强度档；厂商默认 m
 _MINIMAX_NAME_RE = re.compile(r"minimax[-_ ]?m?(\d+)(?:\.(\d+))?", re.IGNORECASE)
 _MINIMAX_EFFORT_MIN_VER = (3, 1)
 _MINIMAX_FORCED_THINKING_MIN_VER = (3, 1)
+
+
+# ── systemPropmt 占位符替换 ──
+_PROMPT_MARKERS = (
+    "<core_list>",
+    "<core_propmt>",
+    "</core_propmt>",
+    "<user_top_propmt>",
+    "<user_default_propmt>",
+    "<user_core_propmt>",
+    "<user_active_propmt>",
+    "<super_core_propmt>",
+    "<user_sec_propmt>",
+    "<ai_sec_propmt>",
+    "<core_propmt_deepseek>",
+    "</role_core_propmt>",
+)
+# 占位符对应的提示词内容（静态，进程内只构建一次）
+_PROMPT_REPLACEMENTS = {
+    "<core_list>": core_list,
+    "<core_propmt>": core_propmt_one,
+    "</core_propmt>": core_propmt_two,
+    "<user_top_propmt>": user_top_propmt,
+    "<user_default_propmt>": user_default_propmt,
+    "<user_core_propmt>": user_core_propmt,
+    "<user_active_propmt>": user_active_propmt,
+    "<super_core_propmt>": super_core_propmt,
+    "<user_sec_propmt>": user_sec_propmt,
+    "<ai_sec_propmt>": ai_sec_propmt,
+    "<core_propmt_deepseek>": core_propmt_deepseek,
+}
+
+
+def _replace_core_prompts(obj: Any) -> Any:
+    """递归遍历请求体，替换 system prompt 中的占位符."""
+    if isinstance(obj, str):
+        if not any(marker in obj for marker in _PROMPT_MARKERS):
+            return obj
+        obj = obj.replace("</role_core_propmt>", "")
+        for marker, builder in _PROMPT_REPLACEMENTS.items():
+            if marker in obj:
+                obj = obj.replace(marker, builder())
+        return obj
+    if isinstance(obj, dict):
+        return {k: _replace_core_prompts(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_core_prompts(item) for item in obj]
+    return obj
 
 
 def _glm_version(model_name: str) -> Optional[tuple]:
@@ -649,6 +712,31 @@ async def chat_completions(
             llm_purpose, async_type,
         )
 
+    # ── 会员日限额校验（携带 X-User-Id 的用户才校验） ──
+    # 匿名调用（无用户ID）不校验，保持转发原样。
+    # 开关：STARGGLE_ENFORCE_QUOTA=0 关闭（本地调试/压测用）。
+    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in ("1", "true", "yes", "on")
+    if enforce_quota and user_id:
+        level = await call_manage_service.get_effective_membership(db, user_id)
+        daily_limit = get_tier(level).get("dailyLimit", 0)
+        if daily_limit > 0:
+            used = await call_manage_service.get_today_call_count(db, user_id)
+            if used >= daily_limit:
+                logger.info(
+                    "POST /call-manage/chat/completions -> QUOTA user=%s level=%s used=%d limit=%d",
+                    user_id, level, used, daily_limit,
+                )
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "code": "QUOTA_EXCEEDED",
+                        "message": "今日调用次数已达上限，请升级会员",
+                        "level": level,
+                        "used": used,
+                        "dailyLimit": daily_limit,
+                    },
+                )
+
     # ── 从数据库获取所选集群的可用模型并轮询 ──
     models = await call_manage_service.get_active_models(db, async_type=async_type)
     if not models:
@@ -686,6 +774,7 @@ async def chat_completions(
 
     # ── 解析请求体（须先于下方协议适配，body 在此之前尚未赋值）──
     body = await request.json()
+    body = _replace_core_prompts(body)
 
     # ── Anthropic 原生端点：请求体协议适配 ──
     # messages 里的 role:"system" 提为顶层 system 字段（原生协议无 system 角色，不转换上游 400）
@@ -894,6 +983,7 @@ async def chat_completions(
 
         async def event_generator() -> AsyncGenerator[bytes, None]:
             nonlocal client, resp
+            upstream_ok = False
             total_bytes = 0
             accumulated_chunks: list[bytes] = []
             accumulated_content: list[str] = []  # 收集 delta.content
@@ -921,6 +1011,7 @@ async def chat_completions(
                         f"{error_body.decode('utf-8', errors='replace')}\n\n"
                     ).encode("utf-8")
                     return
+                upstream_ok = True
                 # 逐 chunk 累加日志用正文/usage——按行缓冲，细节见 _ingest_sse_chunk
                 sse_buf = b""
                 async for chunk in _stream_aiter_bytes(resp):
@@ -979,8 +1070,10 @@ async def chat_completions(
                         model_name, reasoning_text,
                     )
 
-                # 记录 token 用量（非关键路径，失败不影响响应）
-                if user_id and accumulated_usage:
+                # 记录调用次数与 token 用量（非关键路径，失败不影响响应）。
+                # 上游未必返回 usage（未请求 stream_options.include_usage），
+                # 但调用次数必须记，否则流式请求会绕过日限额。
+                if user_id and upstream_ok:
                     try:
                         await call_manage_service.record_token_usage(
                             db, user_id, model_name, llm_purpose,
