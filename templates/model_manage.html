@@ -561,24 +561,7 @@
                             <input class="input" id="callUser" placeholder="用户 ID">
                         </div>
                         <input class="input" id="callModel" placeholder="模型名称">
-                        <select class="select" id="callPurpose">
-                            <option value="">全部用途</option>
-                            <option value="main">主模型 main</option>
-                            <option value="async">异步 async</option>
-                            <option value="async1">异步分路 async1</option>
-                            <option value="async2">异步分路 async2</option>
-                            <option value="async3">异步分路 async3</option>
-                            <option value="async4">异步分路 async4</option>
-                            <option value="async5">异步分路 async5</option>
-                            <option value="async6">异步分路 async6</option>
-                            <option value="async7">异步分路 async7</option>
-                            <option value="async8">异步分路 async8</option>
-                            <option value="async9">异步分路 async9</option>
-                            <option value="async10">异步分路 async10</option>
-                            <option value="async11">异步分路 async11</option>
-                            <option value="async12">异步分路 async12</option>
-                            <option value="async13">异步分路 async13</option>
-                        </select>
+                        <input class="input" id="callPurpose" placeholder="用途（main / async / 自定义）">
                         <input class="input" id="callStart" type="date" title="开始日期">
                         <input class="input" id="callEnd" type="date" title="结束日期">
                         <button class="btn btn-primary btn-sm" onclick="searchCalls()">查询</button>
@@ -733,8 +716,11 @@
                             <h3>鉴权</h3>
                             <div class="doc-sub">Authorization 可选</div>
                             <p>模型已在「大模型提供商管理」中配置 API Key 时，请求方无需再传 key。</p>
-                            <p>如需覆盖主链 key，可传 <code>Authorization: Bearer &lt;key&gt;</code>；异步链始终使用服务端配置。</p>
-                            <p><code>X-User-Id</code> 用于调用记录与 token 用量统计，不传视为匿名调用。</p>
+                            <p>主链（<code>X-Purpose</code> 缺省为 <code>main</code>）可传
+                                <code>Authorization: Bearer &lt;key&gt;</code> 覆盖服务端 Key；
+                                <code>X-Purpose</code> 以 <code>async</code> 开头时按异步链处理，强制使用服务端 Key。</p>
+                            <p>异步判定只看 <code>X-Purpose</code>，与 <code>X-Async-Type</code> 无关。
+                                <code>X-User-Id</code> 用于调用记录与 token 用量统计，不传视为匿名调用。</p>
                         </div>
                     </div>
 
@@ -754,8 +740,8 @@
                                 </tr>
                                 <tr>
                                     <td><code>X-Purpose</code></td>
-                                    <td><code>main</code> / <code>async1</code>..<code>async13</code></td>
-                                    <td>用途标识，仅用于日志与 token 用量记账，不影响模型选择</td>
+                                    <td><code>main</code>（默认）或任意以 <code>async</code> 开头的标识</td>
+                                    <td>异步判定、日志与 token 用量记账，不影响集群选择；建议 ≤16 字符</td>
                                 </tr>
                                 <tr>
                                     <td><code>X-Thinking</code></td>
@@ -787,7 +773,7 @@
                                 </thead>
                                 <tbody>
                                 <tr><td><span class="tag tag-c1">集群1</span></td><td><code>async1</code></td><td>主 LLM 默认池</td></tr>
-                                <tr><td><span class="tag tag-c2">集群2</span></td><td><code>async2</code></td><td>异步 / 后台任务默认池（原基础模型池）</td></tr>
+                                <tr><td><span class="tag tag-c2">集群2</span></td><td><code>async2</code></td><td>异步 / 后台任务常用池</td></tr>
                                 <tr>
                                     <td>
                                         <div style="display:flex;flex-wrap:wrap;gap:4px">
@@ -803,8 +789,9 @@
                                 </tbody>
                             </table>
                         </div>
-                        <p style="margin-top:14px">未传 <code>X-Async-Type</code> 时兼容回落：主链 <code>async1</code>、
-                            异步链 <code>async2</code>。每个集群内所有启用模型按轮询调度。</p>
+                        <p style="margin-top:14px">未传 <code>X-Async-Type</code> 时按 <code>X-Purpose</code> 回落：
+                            不以 <code>async</code> 开头 → <code>async1</code>，以 <code>async</code> 开头 → <code>async2</code>。
+                            每个集群内所有启用模型按轮询调度。</p>
                         <p>模型配置了 <code>temperature</code> / <code>top_p</code> / <code>top_k</code> /
                             <code>max_tokens</code> 时，服务端会覆盖请求体同名参数；留空则沿用客户端值。</p>
                         <p><code>temperature</code> 与 <code>top_p</code> 互斥，只能配置一个；<code>top_k</code>
@@ -843,7 +830,7 @@ resp = requests.post(
     headers={
         "Content-Type": "application/json",
         "X-Async-Type": "async2",
-        "X-Purpose": "async13",
+        "X-Purpose": "async",
         "X-User-Id": "demo-user",
     },
     json={
@@ -868,7 +855,7 @@ print(resp.json())</pre>
                                 </thead>
                                 <tbody>
                                 <tr><td>200</td><td>成功</td><td>流式读取 <code>data:</code> 事件，直到 <code>[DONE]</code></td></tr>
-                                <tr><td>400</td><td>X-Async-Type 非法</td><td>使用 <code>async1</code>..<code>async9</code></td></tr>
+                                <tr><td>400</td><td>X-Async-Type 或 model 名称非法</td><td>集群用 <code>async1</code>..<code>async9</code>，model 留空或使用合法名称</td></tr>
                                 <tr><td>502</td><td>上游厂商返回错误</td><td>检查提供商地址与 Key，或切换模型</td></tr>
                                 <tr><td>503</td><td>所选集群没有可用模型</td><td>在「大模型管理」中启用该集群模型</td></tr>
                                 </tbody>

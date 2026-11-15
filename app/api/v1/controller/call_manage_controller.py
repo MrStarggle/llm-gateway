@@ -612,8 +612,9 @@ async def chat_completions(
         X-Async-Type: 集群类型 "async1".."async9"（对应管理页集群1..集群9），
                       服务端在该集群内按轮询选择模型。缺省兼容回落：
                       主链 "async1"、异步链 "async2".
-        X-Purpose: "main"（默认）或 "async1".."async13"。
-                   仅用于异步识别、日志与 token 用量记账，不再覆盖模型或请求参数。
+        X-Purpose: 用途标识，默认 "main"；以 "async" 开头时按异步链处理
+                   （强制使用服务端 API Key）。仅用于异步识别、日志与 token 用量记账，
+                   不影响集群选择。
         X-Thinking: 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
                     仅在模型「思考模式」为跟随请求时生效；模型配置为强制开/关时以模型为准.
         X-Response-Format: "json_object" 时按实际模型注入 response_format.
@@ -630,8 +631,8 @@ async def chat_completions(
     user_id = x_user_id
 
     llm_purpose = purpose_header or "main"
-    # 任何 async* 都按异步计（含 async1..13 与未知 async99 等），
-    # 防止未知 purpose 串到主模型路由使用客户端 Authorization key
+    # 任何以 async 开头的 purpose 都按异步计（如 async、async:summary 等），
+    # 防止自定义 purpose 串到主模型路由使用客户端 Authorization key
     is_async = llm_purpose.startswith("async")
 
     # ── 集群类型：请求头是模型池的唯一选择依据 ──
