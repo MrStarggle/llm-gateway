@@ -6,7 +6,6 @@
 """
 import json
 import logging
-import os
 import re
 import time
 from typing import Any, AsyncGenerator, Optional
@@ -19,12 +18,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.config.membership import get_tier
-from app.services import call_manage_service, async_manage_service, model_manage_service
+from app.services import call_manage_service
 from app.utils.response import ResponseFactory
-from propmt import (core_propmt_one, core_propmt_two, core_list, core_propmt_deepseek,
-                    user_top_propmt, user_default_propmt, user_core_propmt, super_core_propmt, user_active_propmt,
-                    user_sec_propmt, ai_sec_propmt)
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +27,6 @@ router = APIRouter()
 
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
-
-# ── 异步LLM总控 purpose 识别（async1..async13，与 async_manage_info.purpose 对应）──
-_ASYNC_PURPOSE_RE = re.compile(r"^async([1-9]|1[0-3])$")
 
 # ── o 系列模型（上游不支持 response_format / 非默认 temperature）──
 _O_SERIES_RE = re.compile(r"o[13](-|mini|pro|\b).*", re.IGNORECASE)
@@ -44,7 +36,7 @@ _CLAUDE_THINKING_BUDGET = 10000
 
 # ── Anthropic 原生 /v1/messages 协议（ofox 等兼容网关，样例见 test.txt）──
 _ANTHROPIC_VERSION = "2023-06-01"       # 请求头 anthropic-version 固定值（协议要求）
-_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192    # 原生协议 max_tokens 必填：总控/客户端均未配置时的兜底
+_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192    # 原生协议 max_tokens 必填：模型/客户端均未配置时的兜底
 
 # 原生 SSE 事件族：命中即走 _ingest_anthropic_sse_data。分流必须先于通用 usage 提取——
 # message_delta 的顶层 usage 只带 output_tokens，落进通用提取会把 prompt_tokens 覆写为 0，
@@ -226,32 +218,6 @@ def _apply_anthropic_native_body(body: dict) -> None:
         "POST /call-manage/chat/completions -> Anthropic 原生适配: %d 条 system 消息提为顶层 system 字段",
         len(system_parts),
     )
-
-
-# ── systemPropmt 占位符替换 ──
-def _replace_core_prompts(obj: Any) -> Any:
-    """递归遍历请求体，替换 system prompt 中的 <core_propmt> / </core_propmt> 占位符."""
-    if isinstance(obj, str):
-        obj = obj.replace("<core_list>", core_list())#指令目录
-        obj = obj.replace("<core_propmt>", core_propmt_one())#核心指令1
-        obj = obj.replace("</core_propmt>", core_propmt_two())#核心指令2
-        obj = obj.replace("<user_top_propmt>", user_top_propmt())#会话层顶部指令
-        obj = obj.replace("<user_default_propmt>", user_default_propmt())#旁白侧会话指令
-        obj = obj.replace("<user_core_propmt>", user_core_propmt())#通用侧会话指令
-        obj = obj.replace("<user_active_propmt>", user_active_propmt())#主动消息触发
-        obj = obj.replace("<super_core_propmt>", super_core_propmt())#超凡侧会话指令
-        obj = obj.replace("<user_sec_propmt>", user_sec_propmt())  # 用户会话层顶部第二条指令
-        obj = obj.replace("<ai_sec_propmt>", ai_sec_propmt())  # AI会话层顶部第二条指令
-        obj = obj.replace("<core_propmt_deepseek>", core_propmt_deepseek())#todo 如果是deepseek系列模型
-        #obj = obj.replace("<core_propmt_deepseek>", "")#todo 如果不是deepseek系列模型；暂时不动这个
-        #obj = obj.replace("<role_core_propmt>", role_core_propmt())#暂时注释，角色发言不需要了
-        obj = obj.replace("</role_core_propmt>", "")
-        return obj
-    if isinstance(obj, dict):
-        return {k: _replace_core_prompts(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_replace_core_prompts(item) for item in obj]
-    return obj
 
 
 # ── 思考模式参数注入 ──
@@ -468,9 +434,8 @@ def _ingest_sse_chunk(
     ``decode().split("\\n")`` 会让两个半行都不以 ``data: `` 开头，**整条 delta 被静默
     丢弃**；流尾没有换行收尾的末行同样永远等不到处理。
 
-    2026-09-20 实测（StarggleChat `docs/1.txt`）：2485 字正文随机缺字 20+ 处
-    （「陈让」→「陈」、「三个月不敢试」→「三个月敢试」语义反转），且正文在句中断掉；
-    同一次请求的思维链同样缺字——两条流共用一个坏的解析，非模型问题。
+    实测：长正文会随机缺字（甚至语义反转），且正文在句中断掉；同一次请求的思维链
+    同样缺字——两条流共用一个坏的解析，并非模型问题。
 
     ``flush=True`` 时把残余当完整行处理（流结束时调用，末帧常无尾随 ``\\n``）。
     """
@@ -634,104 +599,71 @@ async def chat_completions(
     request: Request,
     db: AsyncSession = Depends(get_db),
     authorization: Optional[str] = Header(None),
-    x_starggle_purpose: Optional[str] = Header(None, alias="X-Starggle-Purpose"),
-    x_starggle_response_format: Optional[str] = Header(None, alias="X-Starggle-Response-Format"),
-    x_starggle_thinking: Optional[str] = Header(None, alias="X-Starggle-Thinking"),
-    x_starggle_user_id: Optional[str] = Header(None, alias="X-Starggle-User-Id"),
+    x_async_type: Optional[str] = Header(None, alias="X-Async-Type"),
+    x_purpose: Optional[str] = Header(None, alias="X-Purpose"),
+    x_response_format: Optional[str] = Header(None, alias="X-Response-Format"),
+    x_thinking: Optional[str] = Header(None, alias="X-Thinking"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
     Headers:
         Authorization: 可选的 Bearer token（主 LLM 模式下可覆盖 DB 中的 api_key）.
-        X-Starggle-Purpose: "main"（默认，使用 is_base="0" 的模型轮询）、
-                            "async" 或 "async1".."async13"（异步LLM总控分路：命中 async_manage_info
-                            且启用且已绑定模型时按配置路由并接管 model/思考/temperature/max_tokens，
-                            否则回落 is_base="1" 轮询；裸 "async" 复用 async13「通用后台对话」的配置）.
-        X-Starggle-Thinking: 主 LLM 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
-                             服务端按选中模型/运营商的参数规范注入思考参数；
-                             异步模式不受此头影响（思考模式由总控 is_think 决定：'1'强制开/'0'强制关/NULL跟随客户端不注入，未命中总控强制关闭）.
+        X-Async-Type: 集群类型 "async1".."async9"（对应管理页集群1..集群9），
+                      服务端在该集群内按轮询选择模型。缺省兼容回落：
+                      主链 "async1"、异步链 "async2".
+        X-Purpose: "main"（默认）或 "async1".."async13"。
+                   仅用于异步识别、日志与 token 用量记账，不再覆盖模型或请求参数。
+        X-Thinking: 思考模式开关（"1"/"true" 开启，"0"/"false" 关闭）.
+                    仅在模型「思考模式」为跟随请求时生效；模型配置为强制开/关时以模型为准.
+        X-Response-Format: "json_object" 时按实际模型注入 response_format.
+        X-User-Id: 调用方标识，用于 token 用量与调用记录统计；缺省视为匿名.
 
-    请求体: 标准 OpenAI chat completions 格式.
+    请求体: 标准 OpenAI chat completions 格式。模型配置了 temperature / top_p / top_k /
+            max_tokens 时服务端会覆盖同名请求参数，未配置（NULL）则保留客户端值.
     """
     t0 = time.perf_counter()
-    llm_purpose = x_starggle_purpose or "main"
+    purpose_header = x_purpose
+    async_type_header = x_async_type
+    response_format_header = x_response_format
+    thinking_header = x_thinking
+    user_id = x_user_id
+
+    llm_purpose = purpose_header or "main"
     # 任何 async* 都按异步计（含 async1..13 与未知 async99 等），
     # 防止未知 purpose 串到主模型路由使用客户端 Authorization key
     is_async = llm_purpose.startswith("async")
 
-    # ── 异步LLM总控：async* 命中总控表且启用且已绑定模型时走配置路由，否则回落轮询 ──
-    # async1..13 各查各的行；裸 "async" 及其他未知 async* 统一复用 async13「通用后台对话」的配置
-    purpose_cfg = None
-    lookup_purpose = llm_purpose
-    if is_async:
-        if not _ASYNC_PURPOSE_RE.match(llm_purpose):
-            lookup_purpose = "async13"
-        purpose_cfg = await async_manage_service.get_config_by_purpose(db, lookup_purpose)
-    use_config = bool(purpose_cfg and purpose_cfg.is_using == "1" and purpose_cfg.ai_model_id)
+    # ── 集群类型：请求头是模型池的唯一选择依据 ──
+    async_type = (async_type_header or "").strip().lower()
+    if async_type and async_type not in call_manage_service.VALID_ASYNC_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="非法 X-Async-Type，可选值：async1..async9",
+        )
+    if not async_type:
+        # 未指定集群时按用途回落：主链→集群1，异步链→集群2
+        async_type = "async2" if is_async else "async1"
+        logger.info(
+            "POST /call-manage/chat/completions -> 未提供 X-Async-Type，按 purpose=%s 回落 %s",
+            llm_purpose, async_type,
+        )
 
-    # ── 会员日限额校验（携带 X-Starggle-User-Id 的用户才校验） ──
-    # 匿名调用（无用户ID）不校验，保持转发原样。
-    # 开关：STARGGLE_ENFORCE_QUOTA=0 关闭（本地调试/压测用）。
-    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in ("1", "true", "yes", "on")
-    if enforce_quota and x_starggle_user_id:
-        level = await call_manage_service.get_effective_membership(db, x_starggle_user_id)
-        daily_limit = get_tier(level).get("dailyLimit", 0)
-        if daily_limit > 0:
-            used = await call_manage_service.get_today_call_count(db, x_starggle_user_id)
-            if used >= daily_limit:
-                logger.info(
-                    "POST /call-manage/chat/completions -> QUOTA user=%s level=%s used=%d limit=%d",
-                    x_starggle_user_id, level, used, daily_limit,
-                )
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "code": "QUOTA_EXCEEDED",
-                        "message": "今日调用次数已达上限，请升级会员",
-                        "level": level,
-                        "used": used,
-                        "dailyLimit": daily_limit,
-                    },
-                )
+    # ── 从数据库获取所选集群的可用模型并轮询 ──
+    models = await call_manage_service.get_active_models(db, async_type=async_type)
+    if not models:
+        logger.error("集群 %s 没有可用的 %s 模型（is_using=1）", async_type, llm_purpose)
+        raise HTTPException(
+            status_code=503,
+            detail=f"集群 {async_type} 没有可用的 LLM 模型，请检查 model_manage_info 表配置",
+        )
 
-    # ── 从数据库获取可用模型 ──
-    # 总控优先：purpose 命中且启用且已绑定模型时直接点查绑定模型（不查 is_base、不走轮询，
-    # 允许绑定主模型池的模型——如导演A/B对齐主LLM）；绑定失效则回落 is_base=1 轮询
-    selected = None
-    if use_config:
-        bound = await model_manage_service.get_model_by_id(db, purpose_cfg.ai_model_id)
-        if bound is None or bound.is_using != "1":
-            logger.warning(
-                "POST /call-manage/chat/completions -> purpose=%s 总控(config=%s)绑定模型 %s 不存在或停用，回落 is_base=1 轮询",
-                llm_purpose, lookup_purpose, purpose_cfg.ai_model_id,
-            )
-            use_config = False
-        else:
-            selected = bound
-            logger.info(
-                "POST /call-manage/chat/completions -> purpose=%s 命中异步LLM总控(config=%s): "
-                "model=%r com=%s is_think=%s",
-                llm_purpose, lookup_purpose, selected.ai_model_name, selected.com_name, purpose_cfg.is_think,
-            )
-
-    if selected is None:
-        target_is_base = "1" if is_async else "0"
-        counter_type = "async" if is_async else "primary"
-        models = await call_manage_service.get_active_models(db, is_base=target_is_base)
-
-        if not models:
-            logger.error("没有可用的 %s 模型（is_using=1, is_base=%s）", llm_purpose, target_is_base)
-            raise HTTPException(
-                status_code=503,
-                detail=f"没有可用的{'异步' if is_async else '主'} LLM 模型，请检查 model_manage_info 表配置",
-            )
-
-        selected = await call_manage_service.next_model(models, counter_type)
+    selected = await call_manage_service.next_model(models, async_type)
 
     logger.info(
-        "POST /call-manage/chat/completions -> 选中模型详情: ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s is_base=%s",
-        selected.ai_model_id, selected.ai_model_name, selected.com_name,
-        selected.com_url, selected.is_base,
+        "POST /call-manage/chat/completions -> 选中模型详情: cluster=%s ai_model_id=%s ai_model_name=%r com_name=%s com_url=%s",
+        async_type, selected.ai_model_id, selected.ai_model_name, selected.com_name,
+        selected.com_url,
     )
 
     # ── 校验并构造转发 URL ──
@@ -754,7 +686,6 @@ async def chat_completions(
 
     # ── 解析请求体（须先于下方协议适配，body 在此之前尚未赋值）──
     body = await request.json()
-    body = _replace_core_prompts(body)
 
     # ── Anthropic 原生端点：请求体协议适配 ──
     # messages 里的 role:"system" 提为顶层 system 字段（原生协议无 system 角色，不转换上游 400）
@@ -773,12 +704,12 @@ async def chat_completions(
         if not api_key:
             raise HTTPException(status_code=401, detail="缺少 Authorization header 或 API Key")
 
-    # （思考模式注入统一移至下方 model 名解析之后：异步按总控 is_think，主模式按 X-Starggle-Thinking 头）
+    # （思考模式注入统一移至下方 model 名解析之后：模型配置优先，跟随请求时按 X-Thinking 头）
 
     # ── response_format 注入 ──
-    # 客户端通过 X-Starggle-Response-Format header 声明需要 JSON 输出，
+    # 客户端通过 X-Response-Format header 声明需要 JSON 输出，
     # 服务端根据实际模型决定是否/如何注入 response_format。
-    if x_starggle_response_format == "json_object":
+    if response_format_header == "json_object":
         model_name_lower = selected.ai_model_name.lower()
         is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
         if is_anthropic_native:
@@ -817,48 +748,64 @@ async def chat_completions(
         )
 
     # ── 思考模式开关判定 ──
-    # 异步模式：总控配置 is_think 决定 —— "1"强制开 / "0"强制关 / None跟随客户端（think_enabled 保持 None → 不注入，请求体原样透传）；
-    #           未命中总控的回落（含裸 async 未配 async13）一律强制关闭（兼容推理模型）
-    # 主模式：由 X-Starggle-Thinking 头控制；缺头不注入，保持请求体原样
+    # 模型管理「思考模式」：0 跟随请求 / 1 强制开启 / 2 强制关闭；1、2 优先于请求头。
+    # 跟随请求时：主链可用 X-Thinking 头表达偏好，缺头则不注入，保持请求体原样。
     think_enabled: Optional[bool] = None
-    if is_async:
-        think_enabled = {"1": True, "0": False}.get(purpose_cfg.is_think) if use_config else False
-    elif x_starggle_thinking is not None:
-        think_enabled = x_starggle_thinking.strip().lower() in ("1", "true", "yes", "on", "enabled")
+    model_think_mode = selected.is_think or "0"
+    if model_think_mode == "1":
+        think_enabled = True
+    elif model_think_mode == "2":
+        think_enabled = False
+    elif thinking_header is not None:
+        think_enabled = thinking_header.strip().lower() in ("1", "true", "yes", "on", "enabled")
         logger.info(
-            "POST /call-manage/chat/completions -> X-Starggle-Thinking=%r enabled=%s model=%s",
-            x_starggle_thinking, think_enabled, model_name,
+            "POST /call-manage/chat/completions -> X-Thinking=%r enabled=%s model=%s",
+            thinking_header, think_enabled, model_name,
+        )
+    if model_think_mode in ("1", "2"):
+        logger.info(
+            "POST /call-manage/chat/completions -> 模型思考模式=%s 生效 enabled=%s model=%s",
+            model_think_mode, think_enabled, model_name,
         )
 
-    # ── 异步LLM总控参数覆盖：模型/temperature/max_tokens 服务端接管 ──
-    # 客户端 body 里的值仅作未配置回落时的默认。
-    # 覆盖豁免：o 系列不支持非默认 temperature；Claude 思考模式要求 temperature 固定为 1。
+    # ── 模型级参数覆盖：temperature / top_p / top_k / max_tokens ──
+    # 非 NULL 时覆盖客户端请求体同名参数；NULL 表示沿用客户端值。
+    # temperature 与 top_p 互斥：同时配置时仅 temperature 生效（top_k 独立）。
+    # 覆盖豁免：o 系列不支持 temperature/top_p/top_k；
+    # Claude 思考模式要求 temperature 固定为 1 且不能携带 top_p/top_k。
     # （Claude 思考与 max_tokens 的预算冲突在下方思考注入后统一收敛，此处无需跳过覆盖）
-    if use_config:
-        body["model"] = selected.ai_model_name
-        model_name = selected.ai_model_name
-        model_name_lower = model_name.lower()
-        is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
-        is_claude = "claude" in model_name_lower
-        # 思考是否（将）开启：强制开=True；跟随客户端（think_enabled=None）时看请求体自带思考标记。
-        # Claude 思考模式要求 temperature 固定为 1（Anthropic 硬约束），开启时跳过 temperature 覆盖避免上游 400。
-        body_thinking = body.get("thinking")
-        client_think_on = (
-            (isinstance(body_thinking, dict) and body_thinking.get("type") == "enabled")
-            or body.get("reasoning_effort") is not None
+    model_name_lower = model_name.lower()
+    is_o_series = bool(_O_SERIES_RE.match(model_name_lower))
+    is_claude = "claude" in model_name_lower
+    # 思考是否（将）开启：强制开=True；跟随客户端（think_enabled=None）时看请求体自带思考标记。
+    body_thinking = body.get("thinking")
+    client_think_on = (
+        (isinstance(body_thinking, dict) and body_thinking.get("type") == "enabled")
+        or body.get("reasoning_effort") is not None
+    )
+    think_on = think_enabled is True or (think_enabled is None and client_think_on)
+    if selected.temperature is not None and selected.top_p is not None:
+        logger.warning(
+            "模型同时配置 temperature 与 top_p，按 temperature 生效: model=%s", model_name,
         )
-        think_on = think_enabled is True or (think_enabled is None and client_think_on)
-        if purpose_cfg.temperature is not None and not is_o_series and not (is_claude and think_on):
-            body["temperature"] = purpose_cfg.temperature
-        if purpose_cfg.max_tokens is not None:
-            body["max_tokens"] = purpose_cfg.max_tokens
+    sampling_blocked = is_o_series or (is_claude and think_on)
+    if not sampling_blocked:
+        if selected.temperature is not None:
+            body["temperature"] = selected.temperature
+        elif selected.top_p is not None:
+            body["top_p"] = selected.top_p
+        if selected.top_k is not None:
+            body["top_k"] = selected.top_k
+    if selected.max_tokens is not None:
+        body["max_tokens"] = selected.max_tokens
+    if any(v is not None for v in (selected.temperature, selected.top_p, selected.top_k, selected.max_tokens)):
         logger.info(
-            "POST /call-manage/chat/completions -> purpose=%s 总控覆盖: model=%r temperature=%r max_tokens=%r",
-            llm_purpose, body.get("model"), body.get("temperature"), body.get("max_tokens"),
+            "POST /call-manage/chat/completions -> 模型级参数覆盖: model=%r temperature=%r top_p=%r top_k=%r max_tokens=%r",
+            model_name, body.get("temperature"), body.get("top_p"), body.get("top_k"), body.get("max_tokens"),
         )
 
     # ── Anthropic 原生端点：max_tokens 必填，缺省兜底 ──
-    # 总控与客户端都没给时上游直接 400；兜底值须能装下思考预算收敛的最低余量
+    # 模型与客户端都没给时上游直接 400；兜底值须能装下思考预算收敛的最低余量
     # （budget ≥1024 + 正文 ≥1024），且小于默认思考预算以触发下方收敛逻辑。
     # bool 是 int 子类：JSON max_tokens=true 会漏过 isinstance int 判断，须显式排除
     body_max_tokens = body.get("max_tokens")
@@ -872,7 +819,7 @@ async def chat_completions(
     # ── 思考参数注入：按选中模型/运营商的参数规范构造 ──
     # 例外：强制思考型号（GLM-5.3 族 / MiniMax-M3.1+）即使「未表达偏好」也要注入。它们关不掉，不注入就是
     # 厂商默认 max（最贵最慢那一档）——异步链 is_think=NULL（跟随客户端）而客户端又不发
-    # X-Starggle-Thinking 头时正是这条路。按「关闭请求」交给 _apply_thinking_params 降级为
+    # X-Thinking 头时正是这条路。按「关闭请求」交给 _apply_thinking_params 降级为
     # enabled + 最低档；其余模型维持「缺头不注入、请求体原样透传」的既有契约。
     if think_enabled is not None:
         _apply_thinking_params(body, model_name, selected.com_url, think_enabled)
@@ -883,7 +830,7 @@ async def chat_completions(
     # budget_tokens 必须小于 max_tokens（Anthropic 硬约束，OpenRouter 透传同约束）。
     # 预算不足时把 budget 收敛到实际 max_tokens 内（最低 1024）；连最低预算都放不下则关闭思考，
     # 避免整路请求上游 400。仅直连 Claude 的 thinking 字段可收敛；OpenRouter reasoning 无 budget 键不动。
-    # guard 不能只看 think_enabled：总控 is_think=NULL（跟随客户端）而客户端自带
+    # guard 不能只看 think_enabled：主链缺思考头（think_enabled=None）而客户端自带
     # thinking.enabled 时，上方刚兜底注入的 max_tokens 可能小于其 budget，同样须收敛。
     # 注意：本块必须与上面的 if/elif **同级**，不能被塞进某个分支体——它自身已有按需 guard。
     if "claude" in model_name.lower():
@@ -1033,14 +980,14 @@ async def chat_completions(
                     )
 
                 # 记录 token 用量（非关键路径，失败不影响响应）
-                if x_starggle_user_id and accumulated_usage:
+                if user_id and accumulated_usage:
                     try:
                         await call_manage_service.record_token_usage(
-                            db, x_starggle_user_id, model_name, llm_purpose,
+                            db, user_id, model_name, llm_purpose,
                             is_stream=True, usage=accumulated_usage,
                         )
                     except Exception as e:
-                        logger.warning("记录流式 token 用量失败: user_id=%s error=%s", x_starggle_user_id, e)
+                        logger.warning("记录流式 token 用量失败: user_id=%s error=%s", user_id, e)
 
         return StreamingResponse(
             event_generator(),
@@ -1098,11 +1045,11 @@ async def chat_completions(
                         "prompt_cache_miss_tokens": cache_creation,
                     }
                 await call_manage_service.record_token_usage(
-                    db, x_starggle_user_id, model_name, llm_purpose,
+                    db, user_id, model_name, llm_purpose,
                     is_stream=False, usage=usage,
                 )
             except Exception as e:
-                logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", x_starggle_user_id, e)
+                logger.warning("记录非流式 token 用量失败: user_id=%s error=%s", user_id, e)
 
             return data
     except HTTPException:

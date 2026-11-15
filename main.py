@@ -1,15 +1,20 @@
+"""LLM Gateway - 多厂商大模型统一接入网关"""
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-from app.api.v1.api import api_router
+# 先加载 .env，再导入会在模块级读取环境变量的模块
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+from app.api.v1.api import api_router  # noqa: E402
 
 logger = logging.getLogger()  # root logger — 让所有模块的日志都能输出
 logger.setLevel(logging.INFO)
@@ -22,7 +27,8 @@ if not logger.handlers:
 for lib in ("httpx", "httpcore", "urllib3"):
     logging.getLogger(lib).setLevel(logging.WARNING)
 
-DEBUG = os.environ.get("STARGGLE_DEBUG", "").lower() in ("1", "true", "yes")
+DEBUG = os.environ.get("GATEWAY_DEBUG", "").lower() in ("1", "true", "yes")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -40,139 +46,42 @@ async def lifespan(_app: FastAPI):
     logger.info("数据库连接池已释放")
 
 
-app = FastAPI(title="LLM API 转发服务 v2", lifespan=lifespan)
+app = FastAPI(title="LLM Gateway", lifespan=lifespan)
 
+# 管理台默认同源访问；跨域部署时通过 CORS_ORIGINS 配置允许来源（逗号分隔）
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.starggle.com"],
+    allow_origins=_cors_origins,
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-COMPANLIST_FILE = BASE_DIR / "companlist.txt"
-
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # 挂载 v1 API 路由
 app.include_router(api_router, prefix="/api/v1")
 
-# 同时挂载到 /router 中间路径
+# 同时挂载到 /router 中间路径（兼容既有调用）
 app.include_router(api_router, prefix="/router")
 
 
-# ---------- 厂家列表文件读写 ----------
-def read_companlist():
-    companies = []
-    if COMPANLIST_FILE.exists():
-        with open(COMPANLIST_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    parts = line.split(",", 2)
-                    if len(parts) >= 2:
-                        companies.append({
-                            "domain": parts[0].strip(),
-                            "name": parts[1].strip(),
-                            "notes": parts[2].strip() if len(parts) > 2 else ""
-                        })
-    return companies
-
-
-def write_companlist(companies):
-    with open(COMPANLIST_FILE, "w", encoding="utf-8") as f:
-        f.write("# 域名, 厂家名称, 备注\n")
-        for c in companies:
-            f.write(f"{c['domain']}, {c['name']}, {c.get('notes', '')}\n")
-
-
-# ---------- Pydantic 模型 ----------
-class CompanyCreate(BaseModel):
-    domain: str
-    name: str
-    notes: str = ""
-
-
-class CompanyUpdate(BaseModel):
-    domain: str
-    name: str
-    notes: str = ""
-
-
-# ---------- 厂家管理 API ----------
-@app.get("/api/companlist")
-async def get_companlist():
-    companies = read_companlist()
-    logger.info(f"GET /api/companlist -> {len(companies)} companies")
-    return companies
-
-
-@app.post("/api/companlist", status_code=201)
-async def add_company(company: CompanyCreate):
-    companies = read_companlist()
-    companies.append({"domain": company.domain, "name": company.name, "notes": company.notes})
-    write_companlist(companies)
-    logger.info(f"POST /api/companlist -> add domain={company.domain} name={company.name}")
-    return {"message": "ok"}
-
-
-@app.put("/api/companlist/{index}")
-async def update_company(index: int, company: CompanyUpdate):
-    companies = read_companlist()
-    if index < 0 or index >= len(companies):
-        logger.warning(f"PUT /api/companlist/{index} -> 404 index not found")
-        raise HTTPException(status_code=404, detail="索引不存在")
-    companies[index] = {"domain": company.domain, "name": company.name, "notes": company.notes}
-    write_companlist(companies)
-    logger.info(f"PUT /api/companlist/{index} -> update domain={company.domain} name={company.name}")
-    return {"message": "ok"}
-
-
-@app.delete("/api/companlist/{index}")
-async def delete_company(index: int):
-    companies = read_companlist()
-    if index < 0 or index >= len(companies):
-        logger.warning(f"DELETE /api/companlist/{index} -> 404 index not found")
-        raise HTTPException(status_code=404, detail="索引不存在")
-    removed = companies.pop(index)
-    write_companlist(companies)
-    logger.info(f"DELETE /api/companlist/{index} -> removed domain={removed['domain']} name={removed['name']}")
-    return {"message": "ok"}
-
-
-# ---------- 前端页面 ----------
+# ---------- 前端管理台 ----------
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    html_path = BASE_DIR / "templates" / "index.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
-
-
 @app.get("/model-manage", response_class=HTMLResponse)
-async def model_manage_page():
+async def manage_page():
     html_path = BASE_DIR / "templates" / "model_manage.html"
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
-@app.get("/user-manage", response_class=HTMLResponse)
-async def user_manage_page():
-    html_path = BASE_DIR / "templates" / "user_manage.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
-
-
-@app.get("/async-manage", response_class=HTMLResponse)
-async def async_manage_page():
-    html_path = BASE_DIR / "templates" / "async_manage.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
-
-
 if __name__ == "__main__":
-    import uvicorn
     import asyncio
 
-    logger.debug("DEBUG 模式已开启 — 请求体将完整打印到日志")
+    import uvicorn
 
-    config = uvicorn.Config(app, host="0.0.0.0", port=9010)
+    port = int(os.getenv("PORT", "9010"))
+    config = uvicorn.Config(app, host="0.0.0.0", port=port)
     server = uvicorn.Server(config)
     asyncio.run(server.serve())
