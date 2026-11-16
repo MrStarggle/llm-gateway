@@ -29,6 +29,7 @@ class ModelManageCreate(BaseModel):
     price_currency: str = Field(default="USD", max_length=8, description="价格币种")
     extra_config: str | None = Field(default=None, description="语音模型JSON配置")
     remarks: str | None = Field(default=None, description="备注")
+    batch_no: int | None = Field(default=None, description="排序批次号；复制模型时传入源模型批次")
 
     @field_validator("extra_config")
     @classmethod

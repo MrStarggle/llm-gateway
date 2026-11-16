@@ -57,6 +57,16 @@ class ChatPageTest(GatewayTestCase):
                     async_type="async1",
                 ),
                 ModelManageInfo(
+                    ai_model_id="chat-m6",
+                    ai_model_name="model-a",
+                    com_name="provider-c",
+                    com_url="https://c.example/v1",
+                    api_key="upstream-c",
+                    ai_model_type="0",
+                    is_using="1",
+                    async_type="async3",
+                ),
+                ModelManageInfo(
                     ai_model_id="chat-m5",
                     ai_model_name="speech-model",
                     com_name="provider-b",
@@ -95,8 +105,9 @@ class ChatPageTest(GatewayTestCase):
             self.assertEqual(payload["object"], "list")
             by_id = {item["id"]: item for item in payload["data"]}
             self.assertEqual(set(by_id), {"model-a", "model-b"})
-            self.assertEqual(by_id["model-a"]["x_clusters"], ["async1", "async2"])
+            self.assertEqual(by_id["model-a"]["x_clusters"], ["async1", "async2", "async3"])
             self.assertEqual(by_id["model-a"]["x_async_type"], "async1")
+            self.assertEqual(by_id["model-a"]["x_providers"], ["provider-a", "provider-c"])
             self.assertEqual(by_id["model-a"]["owned_by"], "provider-a")
             self.assertEqual(by_id["model-a"]["x_pricing"]["input_per_1m"], 1.5)
             self.assertNotIn("api_key", by_id["model-a"])

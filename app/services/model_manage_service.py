@@ -1,5 +1,6 @@
 """模型管理 业务逻辑层"""
 import logging
+import time
 from datetime import datetime
 from decimal import Decimal
 
@@ -39,7 +40,12 @@ async def get_model_list(
         if query.ai_model_type:
             stmt = stmt.where(ModelManageInfo.ai_model_type == query.ai_model_type)
 
-    stmt = stmt.order_by(ModelManageInfo.created_at.desc())
+    # 批次倒序保持「新建优先」；同批次内按创建时间正序，使复制记录紧跟源模型。
+    stmt = stmt.order_by(
+        ModelManageInfo.batch_no.desc(),
+        ModelManageInfo.created_at.asc(),
+        ModelManageInfo.ai_model_id.asc(),
+    )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -74,6 +80,8 @@ async def create_model(db: AsyncSession, data: ModelManageCreate) -> ModelManage
         com_name, com_url, api_key = data.com_name, data.com_url, data.api_key
 
     model_id = snowflake_id_generator.next_id_str()
+    # 普通新增生成新批次；复制模型（传入源批次）沿用源模型批次，保持相邻展示。
+    batch_no = data.batch_no if data.batch_no is not None else int(time.time() * 1000)
     model = ModelManageInfo(
         ai_model_id=model_id,
         ai_model_name=data.ai_model_name,
@@ -97,6 +105,7 @@ async def create_model(db: AsyncSession, data: ModelManageCreate) -> ModelManage
         price_updated_at=datetime.now() if (data.input_price_per_1m is not None or data.output_price_per_1m is not None) else None,
         extra_config=data.extra_config,
         remarks=data.remarks,
+        batch_no=batch_no,
     )
     db.add(model)
     await db.commit()

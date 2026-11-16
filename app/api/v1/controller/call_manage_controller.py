@@ -1422,9 +1422,11 @@ async def list_models_openai(
                 "created": created,
                 "owned_by": model.com_name or "starggle",
                 "x_clusters": set(),
+                "x_providers": set(),
                 "x_pricing": None,
             }
         entry["x_clusters"].add(model.async_type)
+        entry["x_providers"].add(model.com_name or "starggle")
         if entry["x_pricing"] is None and (
             model.input_price_per_1m is not None or model.output_price_per_1m is not None
         ):
@@ -1446,6 +1448,7 @@ async def list_models_openai(
         clusters = sorted(entry["x_clusters"])
         entry["x_clusters"] = clusters
         entry["x_async_type"] = clusters[0] if clusters else "async1"
+        entry["x_providers"] = sorted(entry["x_providers"])
         data.append(entry)
 
     return JSONResponse(

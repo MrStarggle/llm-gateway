@@ -139,6 +139,9 @@ _SQLITE_COLUMN_MIGRATIONS = [
     ("model_manage_info", "price_currency", "VARCHAR(8) NOT NULL DEFAULT 'USD'", None),
     ("model_manage_info", "price_source", "VARCHAR(16) NULL", None),
     ("model_manage_info", "price_updated_at", "DATETIME NULL", None),
+    # 模型列表排序批次：复制模型沿用源模型批次
+    ("model_manage_info", "batch_no", "INTEGER NULL",
+     "CREATE INDEX IF NOT EXISTS ix_model_manage_info_batch_no ON model_manage_info (batch_no)"),
     # 项目归属与请求追踪
     ("user_token_info", "project_id", "VARCHAR(64) NULL",
      "CREATE INDEX IF NOT EXISTS ix_user_token_info_project_id ON user_token_info (project_id)"),
@@ -167,6 +170,15 @@ async def _ensure_sqlite_schema() -> None:
                 await conn.execute(text(index_sql))
             by_table[table].add(column)
             print(f" SQLite 迁移执行成功: {table}.{column}")
+
+        # 存量模型补齐排序批次（按创建时间秒值初始化，保持原有「新→旧」视图）
+        try:
+            await conn.execute(text(
+                "UPDATE model_manage_info SET batch_no = CAST(strftime('%s', created_at) AS INTEGER) "
+                "WHERE batch_no IS NULL"
+            ))
+        except Exception as e:
+            print(f" SQLite 批次号回填跳过: {e}")
 
 
 async def _init_mysql_schema() -> None:
@@ -270,6 +282,10 @@ async def run_migrations():
         "ALTER TABLE model_manage_info ADD COLUMN price_currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '价格币种'",
         "ALTER TABLE model_manage_info ADD COLUMN price_source VARCHAR(16) NULL COMMENT '价格来源：manual/provider'",
         "ALTER TABLE model_manage_info ADD COLUMN price_updated_at DATETIME NULL COMMENT '价格更新时间'",
+        # 模型列表排序批次：普通新增生成新批次，复制模型沿用源模型批次
+        "ALTER TABLE model_manage_info ADD COLUMN batch_no BIGINT NULL COMMENT '排序批次号：同批次模型相邻展示'",
+        "ALTER TABLE model_manage_info ADD INDEX idx_model_batch_no (batch_no)",
+        "UPDATE model_manage_info SET batch_no = UNIX_TIMESTAMP(created_at) WHERE batch_no IS NULL",
         "ALTER TABLE user_token_info ADD COLUMN estimated_cost DECIMAL(18,8) NULL COMMENT '本次调用成本（估算或上游返回）'",
         "ALTER TABLE user_token_info ADD COLUMN cost_currency VARCHAR(8) NULL COMMENT '成本币种'",
         "ALTER TABLE user_token_info ADD COLUMN cost_source VARCHAR(16) NULL COMMENT '成本来源：estimate/provider'",

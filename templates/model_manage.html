@@ -177,6 +177,9 @@
     th { color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; background: #fbfbfd; white-space: nowrap; }
     tbody tr:last-child td { border-bottom: 0; }
     tbody tr:hover td { background: #f9faff; }
+    /* 复制成功后短暂高亮新增行，便于定位 */
+    @keyframes rowFlash { from { background: var(--accent-soft); } to { background: transparent; } }
+    tbody tr.row-copied td { animation: rowFlash 1.8s ease-out; }
     .table-wrap { overflow-x: auto; }
     .num { font-variant-numeric: tabular-nums; }
     .muted { color: var(--text-3); }
@@ -285,6 +288,40 @@
     .modal-close:hover { background: #f3f4f7; color: var(--text); }
     .modal-body { padding: 22px 24px; }
     .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 15px 24px; border-top: 1px solid var(--border); background: #fbfbfd; border-radius: 0 0 14px 14px; }
+
+    /* ========== 确认弹窗 ========== */
+    .modal-overlay.confirm-overlay { align-items: center; padding: 20px; }
+    .confirm-modal {
+        width: 424px; max-width: 100%; background: var(--surface); border-radius: 16px;
+        box-shadow: 0 28px 80px rgba(16, 24, 40, .26), 0 0 0 1px rgba(16, 24, 40, .04);
+        overflow: hidden; animation: popIn .18s ease;
+    }
+    .confirm-body { display: flex; align-items: flex-start; gap: 15px; padding: 24px 24px 20px; }
+    .confirm-icon {
+        width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--danger-soft); color: var(--danger);
+    }
+    .confirm-icon.is-primary { background: var(--accent-soft); color: var(--accent); }
+    .confirm-icon svg { width: 20px; height: 20px; }
+    .confirm-copy { min-width: 0; flex: 1; padding-top: 1px; }
+    .confirm-copy h3 { font-size: 15.5px; font-weight: 650; letter-spacing: -.1px; }
+    .confirm-copy p { margin-top: 7px; font-size: 13px; line-height: 1.65; color: var(--text-2); word-break: break-word; }
+    .confirm-subject {
+        display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px;
+        border: 1px solid var(--border); border-radius: 8px; background: #f7f8fb;
+        font-size: 12.5px; font-weight: 600; color: var(--text); word-break: break-all;
+    }
+    .confirm-subject::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--danger); }
+    .confirm-subject.is-primary::before { background: var(--accent); }
+    .confirm-copy .confirm-note { color: var(--text-3); font-size: 12.5px; }
+    .confirm-foot {
+        display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px;
+        background: #fbfbfd; border-top: 1px solid var(--border);
+    }
+    .btn-danger-solid { background: var(--danger); color: #fff; box-shadow: 0 1px 2px rgba(229, 72, 77, .32); }
+    .btn-danger-solid:hover { background: #d33c41; }
+    .confirm-foot .btn:focus-visible { outline: 2px solid var(--accent-fade); outline-offset: 2px; }
 
     /* 下拉建议 */
     .combo { position: relative; }
@@ -1424,6 +1461,27 @@ print(resp.choices[0].message.content)</pre>
     </div>
 </div>
 
+<!-- ============ 确认弹窗 ============ -->
+<div class="modal-overlay confirm-overlay" id="confirmOverlay"
+     onclick="if (event.target === this) closeConfirm(false)">
+    <div class="confirm-modal" role="dialog" aria-modal="true"
+         aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+        <div class="confirm-body">
+            <div class="confirm-icon" id="confirmIcon"></div>
+            <div class="confirm-copy">
+                <h3 id="confirmTitle">确认操作</h3>
+                <p id="confirmMessage"></p>
+                <div class="confirm-subject" id="confirmSubject"></div>
+                <p class="confirm-note" id="confirmNote"></p>
+            </div>
+        </div>
+        <div class="confirm-foot">
+            <button type="button" class="btn btn-ghost" id="confirmCancelBtn" onclick="closeConfirm(false)">取消</button>
+            <button type="button" class="btn btn-danger-solid" id="confirmOkBtn" onclick="closeConfirm(true)">确认</button>
+        </div>
+    </div>
+</div>
+
 <!-- ============ 鉴权遮罩 ============ -->
 <div class="auth-overlay" id="authOverlay">
     <div class="auth-card">
@@ -1646,6 +1704,80 @@ function esc(s) {
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+
+// ==================== 确认弹窗 ====================
+const CONFIRM_ICONS = {
+    danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'
+        + '<path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
+    primary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+        + '<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5v.01"/></svg>'
+};
+let _confirmResolver = null;
+let _confirmLastFocus = null;
+
+function confirmDialog({ title, message, subject = '', note = '', okText = '确认', tone = 'danger' }) {
+    const overlay = document.getElementById('confirmOverlay');
+    // 若已有未关闭的确认弹窗，先按「取消」结束，避免 Promise 悬挂
+    if (_confirmResolver) closeConfirm(false);
+    const isDanger = tone === 'danger';
+    const icon = document.getElementById('confirmIcon');
+    icon.innerHTML = isDanger ? CONFIRM_ICONS.danger : CONFIRM_ICONS.primary;
+    icon.classList.toggle('is-primary', !isDanger);
+
+    document.getElementById('confirmTitle').textContent = title || '确认操作';
+    document.getElementById('confirmMessage').textContent = message || '';
+    const subjectEl = document.getElementById('confirmSubject');
+    subjectEl.textContent = subject || '';
+    subjectEl.classList.toggle('is-primary', !isDanger);
+    subjectEl.style.display = subject ? '' : 'none';
+    const noteEl = document.getElementById('confirmNote');
+    noteEl.textContent = note || '';
+    noteEl.style.display = note ? '' : 'none';
+
+    const okBtn = document.getElementById('confirmOkBtn');
+    okBtn.textContent = okText;
+    okBtn.className = 'btn ' + (isDanger ? 'btn-danger-solid' : 'btn-primary');
+
+    _confirmLastFocus = document.activeElement;
+    overlay.classList.add('active');
+    // 危险操作默认聚焦「取消」，避免误触回车
+    setTimeout(() => document.getElementById('confirmCancelBtn').focus(), 0);
+    return new Promise(resolve => { _confirmResolver = resolve; });
+}
+
+function closeConfirm(result) {
+    const overlay = document.getElementById('confirmOverlay');
+    if (!overlay.classList.contains('active')) return;
+    overlay.classList.remove('active');
+    const resolve = _confirmResolver;
+    _confirmResolver = null;
+    if (_confirmLastFocus && typeof _confirmLastFocus.focus === 'function') _confirmLastFocus.focus();
+    _confirmLastFocus = null;
+    if (resolve) resolve(result === true);
+}
+
+document.addEventListener('keydown', function (e) {
+    const overlay = document.getElementById('confirmOverlay');
+    if (!overlay.classList.contains('active')) return;
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeConfirm(false);
+    } else if (e.key === 'Tab') {
+        // 焦点限制在弹窗内，避免 Tab 到背后页面
+        const focusables = overlay.querySelectorAll('button');
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+});
 
 function copyCode(btn) {
     const box = btn.closest('.code-box');
@@ -2308,7 +2440,14 @@ async function submitProvider() {
 }
 
 async function deleteProvider(providerId, name) {
-    if (!confirm(`确认删除提供商 "${name}"？`)) return;
+    const ok = await confirmDialog({
+        title: '删除提供商',
+        message: '删除后该提供商将无法继续提供模型服务。若仍有模型关联此提供商，需要先删除或迁移这些模型。',
+        subject: name,
+        note: '此操作不可撤销。',
+        okText: '删除'
+    });
+    if (!ok) return;
     const result = await api('DELETE', '/providers/' + providerId);
     if (result.code === 200) {
         toast('删除成功');
@@ -2353,19 +2492,13 @@ function providerNameOf(m) {
     return p ? p.providerName : (m.comName || '');
 }
 
-function renderModels(list) {
-    const tbody = document.getElementById('modelBody');
-    if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="12"><div class="empty">暂无模型，请点击「新增模型」添加</div></td></tr>';
-        return;
-    }
-    tbody.innerHTML = list.map(m => {
-        const providerName = providerNameOf(m);
-        const providerCell = m.providerId
-            ? `<span class="tag tag-blue">${esc(providerName)}</span>`
-            : `<span class="tag tag-gray" title="历史数据未关联提供商">${esc(providerName || '未关联')}</span>`;
-        return `
-        <tr>
+function modelRowHtml(m) {
+    const providerName = providerNameOf(m);
+    const providerCell = m.providerId
+        ? `<span class="tag tag-blue">${esc(providerName)}</span>`
+        : `<span class="tag tag-gray" title="历史数据未关联提供商">${esc(providerName || '未关联')}</span>`;
+    return `
+        <tr data-model-id="${esc(m.aiModelId)}">
             <td><span class="ellipsis" title="${esc(m.aiModelName)}"><strong>${esc(m.aiModelName)}</strong></span></td>
             <td>${providerCell}</td>
             <td>${m.aiModelType === '1' ? '<span class="tag tag-orange">语音</span>' : '<span class="tag tag-purple">文本</span>'}</td>
@@ -2384,12 +2517,21 @@ function renderModels(list) {
             <td><span class="ellipsis muted" title="${esc(m.remarks)}">${esc(m.remarks || '-')}</span></td>
             <td>
                 <div class="actions" style="justify-content:flex-end">
+                    <button class="btn btn-link btn-sm" onclick="copyModel(this, '${esc(m.aiModelId)}')">复制</button>
                     <button class="btn btn-link btn-sm" onclick="openModelModal('${esc(m.aiModelId)}')">编辑</button>
                     <button class="btn btn-link danger btn-sm" onclick="deleteModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>
                 </div>
             </td>
         </tr>`;
-    }).join('');
+}
+
+function renderModels(list) {
+    const tbody = document.getElementById('modelBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="12"><div class="empty">暂无模型，请点击「新增模型」添加</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(modelRowHtml).join('');
 }
 
 function asyncTypeLabel(value) {
@@ -2461,8 +2603,75 @@ async function toggleUsing(id, labelEl, event) {
     }
 }
 
+// 复制模型：以源模型配置创建一条新记录，并插入到源行下方
+async function copyModel(btn, id) {
+    btn.disabled = true;
+    try {
+        const source = await fetchModelDetail(id);
+        if (!source) return;
+
+        const body = {
+            ai_model_name: source.aiModelName,
+            ai_model_type: source.aiModelType || '0',
+            is_using: source.isUsing,
+            is_think: source.isThink || '0',
+            is_stream: source.isStream || '1',
+            async_type: source.asyncType || 'async1',
+            temperature: source.temperature ?? null,
+            top_p: source.topP ?? null,
+            top_k: source.topK ?? null,
+            max_tokens: source.maxTokens ?? null,
+            input_price_per_1m: source.inputPricePer1m ?? null,
+            output_price_per_1m: source.outputPricePer1m ?? null,
+            price_currency: source.priceCurrency || 'USD',
+            extra_config: source.extraConfig || null,
+            remarks: source.remarks || null,
+            // 沿用源模型批次，保证重新查询时副本仍紧跟源记录
+            batch_no: source.batchNo ?? null
+        };
+        // 关联提供商的模型由服务端回填地址与密钥；历史模型沿用自身配置
+        if (source.providerId) {
+            body.provider_id = source.providerId;
+        } else {
+            body.com_name = source.comName;
+            body.com_url = source.comUrl;
+            body.api_key = source.apiKey;
+        }
+
+        const result = await api('POST', '/', body);
+        if (result.code !== 200 && result.code !== 201) {
+            toast(result.message || '复制失败', false);
+            return;
+        }
+
+        const newModel = result.data || { ...source, aiModelId: null };
+        const sourceRow = document.querySelector(`#modelBody tr[data-model-id="${id}"]`);
+        if (sourceRow && newModel.aiModelId) {
+            sourceRow.insertAdjacentHTML('afterend', modelRowHtml(newModel));
+            const newRow = sourceRow.nextElementSibling;
+            if (newRow) {
+                newRow.classList.add('row-copied');
+                newRow.scrollIntoView({ block: 'nearest' });
+                setTimeout(() => newRow.classList.remove('row-copied'), 1800);
+            }
+        } else {
+            loadModels();
+        }
+        toast('已复制模型');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function deleteModel(id, name) {
-    if (!confirm(`确认删除模型 "${name}"？此操作不可撤销。`)) return;
+    const ok = await confirmDialog({
+        title: '删除模型',
+        message: '删除后该模型将不再参与集群转发，历史调用记录会保留。',
+        subject: name,
+        note: '此操作不可撤销。',
+        okText: '删除'
+    });
+    if (!ok) return;
     const result = await api('DELETE', '/' + id);
     if (result.code === 200) {
         toast('删除成功');
@@ -3043,8 +3252,8 @@ function renderProjectTokens() {
                 <td>${fmtDateTime(tk.lastUsedAt)}</td>
                 <td>${fmtDateTime(tk.expiresAt)}</td>
                 <td style="text-align:right">
-                    <button class="btn btn-ghost btn-sm" onclick="rotateProjectToken('${tk.tokenId}')">轮换</button>
-                    <button class="btn btn-ghost btn-sm" onclick="revokeProjectToken('${tk.tokenId}')">吊销</button>
+                    <button class="btn btn-ghost btn-sm" onclick="rotateProjectToken('${tk.tokenId}', '${esc(tk.name)}')">轮换</button>
+                    <button class="btn btn-ghost btn-sm" onclick="revokeProjectToken('${tk.tokenId}', '${esc(tk.name)}')">吊销</button>
                 </td>
             </tr>`;
     }).join('');
@@ -3196,8 +3405,15 @@ async function refreshCurrentProject() {
     await selectProject(id);
 }
 
-async function revokeProjectToken(tokenId) {
-    if (!confirm('吊销后该密钥立即失效，确定继续？')) return;
+async function revokeProjectToken(tokenId, name) {
+    const ok = await confirmDialog({
+        title: '吊销密钥',
+        message: '吊销后该密钥立即失效，正在使用它的调用会开始失败。',
+        subject: name || '',
+        note: '此操作不可撤销。',
+        okText: '吊销'
+    });
+    if (!ok) return;
     const result = await projectApi('POST', '/tokens/' + tokenId + '/revoke');
     if (result.code === 200) {
         toast('已吊销');
@@ -3207,8 +3423,16 @@ async function revokeProjectToken(tokenId) {
     }
 }
 
-async function rotateProjectToken(tokenId) {
-    if (!confirm('轮换后旧密钥立即失效，确定继续？')) return;
+async function rotateProjectToken(tokenId, name) {
+    const ok = await confirmDialog({
+        title: '轮换密钥',
+        message: '轮换后将生成新密钥，旧密钥立即失效，请及时替换调用方配置。',
+        subject: name || '',
+        note: '新密钥只会展示一次。',
+        okText: '轮换',
+        tone: 'primary'
+    });
+    if (!ok) return;
     const result = await projectApi('POST', '/tokens/' + tokenId + '/rotate', {});
     if (result.code === 200) {
         showTokenSecret(result.data?.token || '');
@@ -3324,7 +3548,7 @@ function renderHealth() {
                 <td class="num">${c.avgLatencyMs === null || c.avgLatencyMs === undefined ? '-' : Math.round(Number(c.avgLatencyMs)) + ' ms'}</td>
                 <td class="num">${fmt(c.consecutiveFailures)}</td>
                 <td><span class="ellipsis" title="${esc(c.lastError || '')}">${esc(c.lastError || '-')}</span></td>
-                <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="resetChannel('${c.modelId}')">重置</button></td>
+                <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="resetChannel('${c.modelId}', '${esc(c.modelName)}')">重置</button></td>
             </tr>`).join('')
         : '<tr><td colspan="9"><div class="empty">暂无启用中的模型</div></td></tr>';
 }
@@ -3347,8 +3571,15 @@ async function saveRouting(asyncType) {
     }
 }
 
-async function resetChannel(modelId) {
-    if (!confirm('确定重置该渠道的熔断状态？')) return;
+async function resetChannel(modelId, modelName) {
+    const ok = await confirmDialog({
+        title: '重置熔断状态',
+        message: '重置后该渠道将恢复参与流量调度，若上游仍异常可能很快再次熔断。',
+        subject: modelName || '',
+        okText: '重置',
+        tone: 'primary'
+    });
+    if (!ok) return;
     const result = await healthApi('POST', '/channels/' + modelId + '/reset');
     if (result.code === 200) {
         toast('已重置');
