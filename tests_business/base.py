@@ -9,10 +9,13 @@ from app.config.database import Base, get_db
 from app.models.channel_health_info import ChannelHealthInfo
 from app.models.cluster_routing_config import ClusterRoutingConfig
 from app.models.model_manage_info import ModelManageInfo
+from app.models.order_info import OrderInfo
 from app.models.project_info import ProjectInfo
 from app.models.project_token_info import ProjectTokenInfo
 from app.models.project_usage_daily import ProjectUsageDaily
 from app.models.user_daily_quota import UserDailyQuota
+from app.models.user_info import UserInfo
+from app.models.user_quota_policy import UserQuotaPolicy
 from app.models.user_token_info import UserTokenInfo
 from app.utils.admin_auth import require_admin_user
 from main import app
@@ -23,12 +26,36 @@ TABLES = [
     ModelManageInfo.__table__,
     UserTokenInfo.__table__,
     UserDailyQuota.__table__,
+    UserInfo.__table__,
+    UserQuotaPolicy.__table__,
+    OrderInfo.__table__,
     ProjectInfo.__table__,
     ProjectTokenInfo.__table__,
     ProjectUsageDaily.__table__,
     ChannelHealthInfo.__table__,
     ClusterRoutingConfig.__table__,
 ]
+
+
+async def seed_user(
+        session_factory,
+        user_id: str = "u1",
+        *,
+        point_balance: int = 5000,
+        user_name: str = "测试用户",
+) -> None:
+    """写入一条共享表 user_info 记录（默认钻石档，避免会员次数限额干扰）."""
+    async with session_factory() as db:
+        db.add(UserInfo(
+            user_id=user_id,
+            user_name=user_name,
+            user_head_img="",
+            login_id=f"login-{user_id}",
+            password="x",
+            email=f"{user_id}@example.com",
+            point_balance=point_balance,
+        ))
+        await db.commit()
 
 
 def _cleanup_db() -> None:

@@ -80,9 +80,22 @@ CREATE TABLE IF NOT EXISTS user_daily_quota
     user_id    VARCHAR(64) NOT NULL COMMENT '调用方用户/客户端ID',
     quota_date DATE        NOT NULL COMMENT '计数日期',
     call_count INT         NOT NULL DEFAULT 0 COMMENT '当日调用次数',
+    total_tokens BIGINT    NOT NULL DEFAULT 0 COMMENT '当日token总数（配额口径）',
     updated_at TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间',
     UNIQUE KEY uq_user_daily_quota_user_date (user_id, quota_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日调用计数表（统计用）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日调用与Token计数表（配额口径）';
+
+CREATE TABLE IF NOT EXISTS user_quota_policy
+(
+    user_id             VARCHAR(64)  NOT NULL PRIMARY KEY COMMENT '用户ID（含 gw:<token_id> 合成ID）',
+    daily_token_limit   BIGINT       NULL COMMENT '每日Token上限；NULL=不限，0=禁止',
+    monthly_token_limit BIGINT       NULL COMMENT '每月Token上限；NULL=不限，0=禁止',
+    status              VARCHAR(8)   NOT NULL DEFAULT 'active' COMMENT '访问状态：active/blocked',
+    remark              VARCHAR(255) NULL COMMENT '备注',
+    created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    updated_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间',
+    KEY idx_user_quota_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户配额与访问策略表';
 
 CREATE TABLE IF NOT EXISTS project_info
 (

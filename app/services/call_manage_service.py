@@ -83,43 +83,58 @@ async def next_model(
     return selected
 
 
-async def incr_today_call_count(db: AsyncSession, user_id: str) -> None:
-    """当日调用计数 +1（user_daily_quota 表，与 token 用量明细分离）.
+async def increment_user_daily_usage(
+        db: AsyncSession,
+        user_id: str,
+        *,
+        calls: int = 1,
+        tokens: int = 0,
+) -> None:
+    """当日调用次数与 token 数原子累加（user_daily_quota 表）.
 
-    计数用于管理台「调用次数」统计。非关键路径：失败仅记日志（fail-open，
-    少计一次比打断已完成的 LLM 响应更可接受）。
+    计数用于管理台统计与用户级 Token 配额校验。非关键路径：失败仅记日志
+    （fail-open，少计一次比打断已完成的 LLM 响应更可接受）。
 
     使用数据库原子自增而非“先读再写”，避免并发请求丢计数；首次插入并发
     撞唯一键时回滚并按自增更新重试一次。
     """
+    uid = (user_id or "")[:64]
+    if not uid:
+        return
+
     today = date.today()
+    call_delta = max(0, int(calls or 0))
+    token_delta = max(0, int(tokens or 0))
     where = (
-        UserDailyQuota.user_id == user_id,
+        UserDailyQuota.user_id == uid,
         UserDailyQuota.quota_date == today,
     )
+    values = {
+        "call_count": UserDailyQuota.call_count + call_delta,
+        "total_tokens": UserDailyQuota.total_tokens + token_delta,
+    }
     try:
-        result = await db.execute(
-            update(UserDailyQuota).where(*where)
-            .values(call_count=UserDailyQuota.call_count + 1)
-        )
+        result = await db.execute(update(UserDailyQuota).where(*where).values(**values))
         if result.rowcount == 0:
-            db.add(UserDailyQuota(user_id=user_id, quota_date=today, call_count=1))
+            db.add(UserDailyQuota(
+                user_id=uid,
+                quota_date=today,
+                call_count=call_delta,
+                total_tokens=token_delta,
+            ))
         await db.commit()
     except IntegrityError:
         # 并发首次插入撞唯一键：另一事务已建好当天行，改为原子自增
         await db.rollback()
         try:
-            await db.execute(
-                update(UserDailyQuota).where(*where)
-                .values(call_count=UserDailyQuota.call_count + 1)
-            )
+            await db.execute(update(UserDailyQuota).where(*where).values(**values))
             await db.commit()
         except Exception as e:
             await db.rollback()
-            logger.error("限额计数失败（fail-open 放行）: user_id=%s error=%s", user_id, e)
+            logger.error("用户用量计数失败（fail-open 放行）: user_id=%s error=%s", uid, e)
     except Exception as e:
         await db.rollback()
-        logger.error("限额计数失败（fail-open 放行）: user_id=%s error=%s", user_id, e)
+        logger.error("用户用量计数失败（fail-open 放行）: user_id=%s error=%s", uid, e)
 
 
 async def record_token_usage(
@@ -139,17 +154,19 @@ async def record_token_usage(
     channel_id: str = "",
     request_id: str = "",
     retry_count: int = 0,
+    generation_id: str = "",
 ) -> dict | None:
     """记录一次 LLM 调用：当日计数 +1 与 token 明细一行.
 
     返回本次调用的用量摘要（供项目配额计数使用）；user_id 为空时返回 None.
     成本优先级：上游 provider_cost > 模型单价估算 > 不记录.
+    generation_id 非空时随行落库，供钻石计费按「一次生成」聚合结算.
     """
     if not user_id:
         return None
-    await incr_today_call_count(db, user_id)
 
     if not usage:
+        await increment_user_daily_usage(db, user_id, calls=1, tokens=0)
         return {
             "totalTokens": 0,
             "cost": None,
@@ -159,7 +176,10 @@ async def record_token_usage(
 
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
-    total_tokens = int(usage.get("total_tokens") or 0)
+    # 部分上游只返回 prompt/completion，配额计数以两者之和兜底
+    total_tokens = int(usage.get("total_tokens") or 0) or (prompt_tokens + completion_tokens)
+    # 计数与明细分离：当日调用次数 +1，同时累计当日 token（用户配额口径）
+    await increment_user_daily_usage(db, user_id, calls=1, tokens=total_tokens)
 
     cost_value: Decimal | None = None
     cost_currency: str | None = None
@@ -185,6 +205,7 @@ async def record_token_usage(
         channel_id=(channel_id or "")[:64] or None,
         request_id=(request_id or "")[:64] or None,
         retry_count=max(0, int(retry_count or 0)),
+        generation_id=(generation_id or "")[:64] or None,
         model=(model or "")[:128],
         purpose=(purpose or "main")[:16],
         feature_code=(feature_code or "uncategorized")[:64],
@@ -253,6 +274,7 @@ async def record_stream_usage_background(
     channel_id: str = "",
     request_id: str = "",
     retry_count: int = 0,
+    generation_id: str = "",
 ) -> None:
     """流式请求结束后，用独立 Session 记录用量与项目计数."""
     from app.config.database import AsyncSessionLocal
@@ -273,6 +295,7 @@ async def record_stream_usage_background(
                 channel_id=channel_id,
                 request_id=request_id,
                 retry_count=retry_count,
+                generation_id=generation_id,
             )
             if project_id and result is not None:
                 try:

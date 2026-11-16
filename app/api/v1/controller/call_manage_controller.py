@@ -21,8 +21,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.config.membership import get_tier
-from app.services import call_manage_service, health_manage_service, project_manage_service
+from app.services import (
+    call_manage_service,
+    health_manage_service,
+    project_manage_service,
+    user_quota_service,
+)
 from app.utils.gateway_error import gateway_error_response
 from app.utils.response import ResponseFactory
 from propmt import (
@@ -921,6 +925,7 @@ async def chat_completions(
     x_thinking: Optional[str] = Header(None, alias="X-Thinking"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_feature_code: Optional[str] = Header(None, alias="X-Feature-Code"),
+    x_generation_id: Optional[str] = Header(None, alias="X-Generation-Id"),
 ):
     """转发聊天补全请求到配置的 LLM 模型（从数据库 model_manage_info 表选取）.
 
@@ -938,6 +943,8 @@ async def chat_completions(
         X-User-Id: 调用方标识，用于 token 用量与调用记录统计；缺省视为匿名.
         X-Feature-Code: 功能码（如 role_reply），仅用于用量分组统计；
                         不传或非法时记为 uncategorized.
+        X-Generation-Id: 生成ID。同一次 AI 生成触发的所有调用共用该值，
+                        钻石计费按它聚合本次生成的全部成本后一次性扣钻.
 
     请求体: 标准 OpenAI chat completions 格式。模型配置了 temperature / top_p / top_k /
             max_tokens 时服务端会覆盖同名请求参数，未配置（NULL）则保留客户端值.
@@ -950,6 +957,7 @@ async def chat_completions(
     thinking_header = x_thinking
     user_id = (x_user_id or "").strip()
     feature_code = _normalize_feature_code(x_feature_code)
+    generation_id = (x_generation_id or "").strip()[:64]
 
     # ── 网关 Token / 项目配额 ──
     # sk-gw- 前缀一律按网关 Token 校验；即使未强制开启，非法 Token 也不能回落成上游 Key。
@@ -958,6 +966,7 @@ async def chat_completions(
     project = None
     project_id = ""
     token_id = ""
+    user_policy = None
     if raw_token.startswith(project_manage_service.TOKEN_PREFIX):
         try:
             identity = await project_manage_service.resolve_gateway_token(db, raw_token)
@@ -970,6 +979,21 @@ async def chat_completions(
         token_id = identity.token_id
         if not user_id:
             user_id = f"gw:{token_id}"
+        # 用户级封禁对项目 Token 调用同样生效，放在项目配额之前；
+        # 显式 X-User-Id 与 gw:<token_id> 任一被封禁都拦截。
+        # 安全边界：X-User-Id 由内部调用方（StarggleCom）传入，网关不应直接暴露公网。
+        user_id = user_quota_service.normalize_user_id(user_id)
+        token_user_id = user_quota_service.normalize_user_id(f"gw:{token_id}")
+        user_policy = await user_quota_service.get_quota_policy(db, user_id)
+        blocked = user_quota_service.is_blocked(user_policy)
+        if not blocked and token_user_id != user_id:
+            token_policy = await user_quota_service.get_quota_policy(db, token_user_id)
+            blocked = user_quota_service.is_blocked(token_policy)
+        if blocked:
+            logger.warning("[%s] 用户已封禁: user=%s", request_id, user_id)
+            return gateway_error_response(
+                403, "User is blocked", error_type="permission_error", code="user_blocked",
+            )
         try:
             snapshot = await project_manage_service.get_usage_snapshot(db, project_id)
             project_manage_service.check_project_quota(project, snapshot)
@@ -982,6 +1006,28 @@ async def chat_completions(
             )
     elif project_manage_service.GATEWAY_TOKEN_REQUIRED:
         return gateway_error_response(401, "Missing API key", code="missing_api_key")
+    elif user_id:
+        # 普通调用：按调用方传入的 X-User-Id 校验封禁
+        user_id = user_quota_service.normalize_user_id(user_id)
+        user_policy = await user_quota_service.get_quota_policy(db, user_id)
+        if user_quota_service.is_blocked(user_policy):
+            logger.warning("[%s] 用户已封禁: user=%s", request_id, user_id)
+            return gateway_error_response(
+                403, "User is blocked", error_type="permission_error", code="user_blocked",
+            )
+
+    # ── 用户级 Token 配额（软限额，NULL=不限、0=禁止） ──
+    if user_quota_service.has_token_limits(user_policy):
+        usage_snapshot = await user_quota_service.get_user_usage_snapshot(db, user_id)
+        try:
+            user_quota_service.check_user_token_limits(user_policy, usage_snapshot)
+        except user_quota_service.UserTokenQuotaError as e:
+            logger.warning(
+                "[%s] 用户Token配额超限: user=%s code=%s", request_id, user_id, e.code,
+            )
+            return gateway_error_response(
+                429, e.message, error_type="rate_limit_error", code=e.code,
+            )
 
     llm_purpose = purpose_header or "main"
     # 任何以 async 开头的 purpose 都按异步计（如 async、async:summary 等），
@@ -1003,31 +1049,9 @@ async def chat_completions(
             llm_purpose, async_type,
         )
 
-    # ── 会员日限额校验（仅非项目 Token 且携带 X-User-Id 的请求） ──
-    # 匿名调用不校验；项目 Token 走项目级配额，避免叠加会员限额。
-    enforce_quota = os.getenv("STARGGLE_ENFORCE_QUOTA", "1").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
-    if identity is None and enforce_quota and user_id:
-        level = await call_manage_service.get_effective_membership(db, user_id)
-        daily_limit = get_tier(level).get("dailyLimit", 0)
-        if daily_limit > 0:
-            used = await call_manage_service.get_today_call_count(db, user_id)
-            if used >= daily_limit:
-                logger.info(
-                    "POST /call-manage/chat/completions -> QUOTA user=%s level=%s used=%d limit=%d",
-                    user_id, level, used, daily_limit,
-                )
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "code": "QUOTA_EXCEEDED",
-                        "message": "今日调用次数已达上限，请升级会员",
-                        "level": level,
-                        "used": used,
-                        "dailyLimit": daily_limit,
-                    },
-                )
+    # 计费口径（2026-11-16）：会员日调用次数限额已下线，改为按「一次生成」聚合扣钻石。
+    # 预检（余额为负则拦截）与结算由 /billing/precheck、/billing/settle 负责，
+    # 本端点只负责把 X-Generation-Id 随用量落库，不在这里扣费。
 
     # ── 解析原始请求体（每次重试都从这份 body 深拷贝）──
     try:
@@ -1274,6 +1298,7 @@ async def chat_completions(
                                 channel_id=_selected.ai_model_id,
                                 request_id=request_id,
                                 retry_count=_attempt_index,
+                                generation_id=generation_id,
                             )
                         )
 
@@ -1428,6 +1453,7 @@ async def chat_completions(
                         channel_id=selected.ai_model_id,
                         request_id=request_id,
                         retry_count=attempt_index,
+                        generation_id=generation_id,
                     )
                     if identity is not None and usage_result is not None:
                         await project_manage_service.increment_project_usage(

@@ -1,6 +1,6 @@
 """订单表 ORM 模型（与 StarggleCom 共享数据库，只读映射）
 
-管理端 user_manage.html 通过它查询订单记录。
+管理端控制台「用户管理 → 订单」分区通过它查询订单记录。
 """
 from sqlalchemy import Column, String, Integer, Text, TIMESTAMP, func
 from app.config.database import Base

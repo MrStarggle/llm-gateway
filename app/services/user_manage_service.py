@@ -2,7 +2,7 @@
 import logging
 from datetime import date
 
-from sqlalchemy import delete, desc, func, or_, select, update
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.membership import tier_of_balance
@@ -50,45 +50,29 @@ async def list_users(
     return list(users), total
 
 
-async def get_today_usage_map(db: AsyncSession, user_ids: list[str]) -> dict[str, int]:
-    """批量查询多个用户今日 LLM 调用次数（限额口径，读 user_daily_quota 计数表）.
-
-    2026-10-04 起与 token 用量明细（user_token_info）分离：本函数供限额展示与
-    重置回读，来源=计数表；明细统计走 token 表.
-    """
-    if not user_ids:
-        return {}
-    rows = await db.execute(
-        select(UserDailyQuota.user_id, UserDailyQuota.call_count)
-        .where(
-            UserDailyQuota.quota_date == date.today(),
-            UserDailyQuota.user_id.in_(user_ids),
-        )
-    )
-    return {uid: int(cnt or 0) for uid, cnt in rows.all()}
-
-
 async def reset_today_call_count(db: AsyncSession, user_id: str) -> int | None:
-    """管理员手动重置用户今日 LLM 调用次数：只清 user_daily_quota 当日计数行.
+    """管理员手动重置用户今日 LLM 调用次数：只把当日 call_count 归零.
 
-    2026-10-04 起限额与用量明细分离：重置只删计数表当日行（额度归零），
-    user_token_info 的 token 用量明细**完整保留**，统计不受影响。
-    返回删除行数；用户不存在返回 None（调用方转 400）。
+    token 计数（total_tokens）与 user_token_info 明细都**保留**，
+    避免“重置调用次数”意外恢复用户级 Token 额度。
+    返回更新行数；用户不存在返回 None（调用方转 400）。
     """
     user = await _get_user(db, user_id)
     if not user:
         return None
     result = await db.execute(
-        delete(UserDailyQuota).where(
+        update(UserDailyQuota)
+        .where(
             UserDailyQuota.user_id == user_id,
             UserDailyQuota.quota_date == date.today(),
         )
+        .values(call_count=0)
     )
     await db.commit()
-    deleted = int(result.rowcount or 0)
-    logger.info("重置今日调用次数（仅计数表，明细保留）: user_id=%s deleted=%d",
-                user_id, deleted)
-    return deleted
+    updated = int(result.rowcount or 0)
+    logger.info("重置今日调用次数（保留 token 计数与明细）: user_id=%s updated=%d",
+                user_id, updated)
+    return updated
 
 
 async def grant_points(
@@ -170,6 +154,14 @@ async def list_orders(
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     orders = (await db.execute(stmt)).scalars().all()
     return list(orders), total
+
+
+async def user_exists(db: AsyncSession, user_id: str) -> bool:
+    """用户是否存在于共享的 user_info 表（用于管理端提示孤儿策略）."""
+    result = await db.execute(
+        select(UserInfo.user_id).where(UserInfo.user_id == user_id)
+    )
+    return result.first() is not None
 
 
 async def _get_user(db: AsyncSession, user_id: str) -> UserInfo | None:

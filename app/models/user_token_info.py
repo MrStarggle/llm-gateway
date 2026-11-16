@@ -15,6 +15,9 @@ class UserTokenInfo(Base):
     channel_id = Column(String(64), nullable=True, index=True, comment="实际服务的模型ID（ai_model_id）")
     request_id = Column(String(64), nullable=True, index=True, comment="请求ID")
     retry_count = Column(Integer, nullable=False, server_default="0", comment="网关内部重试次数")
+    # 钻石计费：同一次 AI 生成触发的所有调用共用该 ID，结算时按它聚合成本
+    generation_id = Column(String(64), nullable=True, index=True,
+                           comment="生成ID（同一次AI生成的多次调用聚合口径）")
     model = Column(String(128), nullable=False, server_default="", comment="模型名称")
     purpose = Column(String(16), nullable=False, server_default="main", comment="用途: main/async/async1..async13（异步分路）")
     feature_code = Column(String(64), nullable=False, server_default="uncategorized", index=True, comment="功能码（用量分组统计用）")

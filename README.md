@@ -10,6 +10,7 @@
 - **模型集群与轮询**：模型按 `async1..async9` 划分为 9 个集群，同集群内按策略选择
 - **项目与 API Key**：按项目签发 `sk-gw-...` Token，支持吊销、轮换与模型范围限制
 - **项目配额**：每日/每月调用次数、Token 数与成本上限
+- **用户配额与封禁**：按用户设置每日/每月 Token 上限与访问封禁开关
 - **渠道健康**：成功率、TTFB 延迟、熔断/冷却，同集群内自动换渠道重试
 - **成本路由**：每个集群可选轮询、成本优先或延迟优先
 - **厂商参数适配**：内置 DeepSeek/GLM/MiniMax/Claude/Gemini/Qwen 等思考参数与协议差异处理
@@ -51,7 +52,7 @@ uvicorn main:app --host 0.0.0.0 --port 9010
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号 | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | `dev-only-change-me` |
 | `ADMIN_USER_IDS` | 管理端 user_id 白名单，逗号分隔；为空时管理接口 fail-closed | 空 |
-| `STARGGLE_ENFORCE_QUOTA` | `1` 时按会员等级校验每日调用次数 | `1` |
+| 钻石计费 | 按 `X-Generation-Id` 聚合一次生成的实际成本，×3 后按 1 美元 = 50 钻石扣除；无开关 | 常开 |
 | `GATEWAY_TOKEN_REQUIRED` | `1` 时所有调用必须带 `sk-gw-` 项目 Token | `0` |
 | `PORT` | 服务端口 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时输出请求体调试日志 | `0` |
@@ -138,6 +139,27 @@ Chatbox 风格客户端，直接调用网关的 `/v1/chat/completions`：
 成功响应带 `X-Request-Id`、`X-Gateway-Model`、`X-Gateway-Cluster`、
 `X-Gateway-Retry-Count`。
 
+## 用户配额与封禁
+
+控制台「用户管理」分区（`/#users`，旧地址 `/user-manage` 会自动重定向）可为单个用户设置：
+
+- 每日 Token 上限、每月 Token 上限：留空 = 不限，`0` = 禁止
+- 访问封禁开关：被封禁用户的调用直接返回 `403`（错误码 `user_blocked`）
+
+规则：
+
+- 按调用方传入的 `X-User-Id` 归属；`sk-gw` 项目 Token 调用同时检查
+  `X-User-Id` 与 `gw:<token_id>`，任一被封禁即拦截
+- Token 限额是软限额：请求前已用 >= 上限才拒绝，返回 `429`
+  （`daily_token_quota_exceeded` / `monthly_token_quota_exceeded`）
+- 用量按服务器本地自然日/自然月累计；只有成功请求计数
+- 上游未返回 `usage` 的调用按 0 token 计，选择这类上游时 Token 限额无法精确生效
+
+> 安全边界：`X-User-Id` 是内部调用方（如 StarggleCom 后端）传入的受信请求头，
+> 网关不校验其真实性。网关应只对内网/后端开放，不要把推理入口直接暴露给浏览器
+> 或公网，否则用户可以伪造身份绕过限额。内置 `/chat` 页固定使用 `local-chat`，
+> 不参与按用户限额。
+
 ## 渠道健康与成本路由
 
 一个模型行视为一个渠道。网关记录今日成功/失败次数、平均 TTFB 延迟、连续失败次数与最后错误。
@@ -161,8 +183,7 @@ app/
   models/              提供商、模型、用量、项目、Token、健康、路由 ORM
   services/            模型选择/路由、用量统计、项目管理、渠道健康
   utils/               JWT、雪花 ID、统一响应、OpenAI 错误格式
-templates/model_manage.html   管理台
-templates/user_manage.html    用户 / 订单管理
+templates/model_manage.html   管理台（含用户 / 订单分区）
 templates/chat.html           内置聊天页
 static/chat/                  聊天页 CSS / JS
 main.py                       FastAPI 入口

@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 # 先加载 .env，再导入会在模块级读取环境变量的模块
@@ -121,13 +121,10 @@ async def manage_page():
     )
 
 
-@app.get("/user-manage", response_class=HTMLResponse)
+@app.get("/user-manage")
 async def user_manage_page():
-    html_path = BASE_DIR / "templates" / "user_manage.html"
-    return HTMLResponse(
-        html_path.read_text(encoding="utf-8"),
-        headers={"Cache-Control": "no-store"},
-    )
+    """用户管理已集成到控制台，旧地址重定向到「用户管理」分区."""
+    return RedirectResponse(url="/#users", status_code=307)
 
 
 @app.get("/chat", response_class=HTMLResponse)

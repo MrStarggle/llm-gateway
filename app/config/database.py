@@ -80,6 +80,7 @@ async def init_database():
         from app.models.order_info import OrderInfo  # noqa: F401
         from app.models.user_daily_quota import UserDailyQuota  # noqa: F401
         from app.models.user_info import UserInfo  # noqa: F401
+        from app.models.user_quota_policy import UserQuotaPolicy  # noqa: F401
         from app.models.user_token_info import UserTokenInfo  # noqa: F401
         # 项目 Token / 配额 / 渠道健康
         from app.models.project_info import ProjectInfo  # noqa: F401
@@ -87,6 +88,7 @@ async def init_database():
         from app.models.project_usage_daily import ProjectUsageDaily  # noqa: F401
         from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401
         from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401
+        from app.models.generation_billing import GenerationBilling  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")
@@ -170,6 +172,11 @@ async def run_migrations():
         "ALTER TABLE user_token_info ADD COLUMN request_id VARCHAR(64) NULL COMMENT '请求ID'",
         "ALTER TABLE user_token_info ADD INDEX idx_user_token_request_id (request_id)",
         "ALTER TABLE user_token_info ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '网关内部重试次数'",
+        # 用户级配额：每日 Token 计数（历史行默认 0，仅统计上线后的新用量）
+        "ALTER TABLE user_daily_quota ADD COLUMN total_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '当日token总数（配额口径）'",
+        # 钻石计费：同一次生成的所有 LLM 调用共用 generation_id（按生成聚合结算）
+        "ALTER TABLE user_token_info ADD COLUMN generation_id VARCHAR(64) NULL COMMENT '生成ID（同一次AI生成的多次调用聚合口径）'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_generation_id (generation_id)",
         # 积分制：积分余额（共享表，列由本系统负责迁移，重复执行自动跳过）
         "ALTER TABLE user_info ADD COLUMN point_balance INT NOT NULL DEFAULT 0 COMMENT '积分余额（余额即会员等级）'",
         # 会员系统：到期时间 / 订阅ID / 套餐ID（与 StarggleCom 迁移保持一致）

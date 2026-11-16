@@ -6,6 +6,7 @@ from app.api.v1.controller import (
     user_manage_controller,
     project_manage_controller,
     health_manage_controller,
+    billing_controller,
 )
 
 
@@ -52,5 +53,12 @@ api_router.include_router(
     call_manage_controller.router,
     prefix="/call-manage",
     tags=["LLM调用管理"]
+)
+
+# 钻石计费（生成前预检 / 生成后结算）
+api_router.include_router(
+    billing_controller.router,
+    prefix="/billing",
+    tags=["钻石计费"]
 )
 

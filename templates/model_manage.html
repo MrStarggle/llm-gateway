@@ -455,10 +455,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4"/><path d="M15 2v4"/><path d="M9 18v4"/><path d="M15 18v4"/><path d="M2 9h4"/><path d="M2 15h4"/><path d="M18 9h4"/><path d="M18 15h4"/></svg>
                 <span>大模型管理</span>
             </button>
-            <a class="nav-item" href="/user-manage" style="text-decoration:none">
+            <button class="nav-item" data-section="users" onclick="switchSection('users')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 <span>用户管理</span>
-            </a>
+            </button>
             <div class="nav-divider"></div>
             <button class="nav-item" data-section="projects" onclick="switchSection('projects')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.85 12.15 6.15-6.15"/><path d="m18 5 1.5-1.5"/><path d="m15 8 1.5-1.5"/></svg>
@@ -763,6 +763,104 @@
                 </div>
             </section>
 
+            <!-- ============ 用户管理 ============ -->
+            <section class="section" id="sec-users">
+                <div class="section-head">
+                    <div class="segmented" id="usersPaneSwitch">
+                        <button class="active" onclick="switchUsersPane('users')">用户</button>
+                        <button onclick="switchUsersPane('orders')">订单</button>
+                    </div>
+                </div>
+
+                <div id="pane-users">
+                    <div class="card">
+                        <div class="toolbar">
+                            <div class="toolbar-search">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                                <input class="input" id="userKeyword" placeholder="搜索 用户ID / 邮箱 / 昵称"
+                                       onkeydown="if(event.key==='Enter')searchUsers()">
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="searchUsers()">查询</button>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                <tr>
+                                    <th>用户ID</th>
+                                    <th>昵称</th>
+                                    <th>邮箱</th>
+                                    <th>积分余额</th>
+                                    <th>会员等级</th>
+                                    <th>今日调用</th>
+                                    <th>Token（日 / 月）</th>
+                                    <th>访问状态</th>
+                                    <th>注册时间</th>
+                                    <th style="text-align:right">操作</th>
+                                </tr>
+                                </thead>
+                                <tbody id="userBody">
+                                <tr><td colspan="10"><div class="empty">加载中...</div></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <span class="page-info" id="userPageInfo">共 0 条</span>
+                            <div class="page-btns">
+                                <button class="btn btn-ghost btn-sm" id="userPrev" onclick="gotoUsersPage(-1)">上一页</button>
+                                <span class="page-num" id="userPageNum">1 / 1</span>
+                                <button class="btn btn-ghost btn-sm" id="userNext" onclick="gotoUsersPage(1)">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="pane-orders" style="display:none">
+                    <div class="card">
+                        <div class="toolbar">
+                            <input class="input" id="orderUserId" placeholder="用户ID">
+                            <select class="select" id="orderStatus">
+                                <option value="">全部状态</option>
+                                <option value="pending">待支付</option>
+                                <option value="paid">已支付</option>
+                                <option value="cancelled">已取消</option>
+                                <option value="refunded">已退款</option>
+                                <option value="failed">失败</option>
+                            </select>
+                            <button class="btn btn-primary btn-sm" onclick="searchOrders()">查询</button>
+                            <button class="btn btn-ghost btn-sm" onclick="resetOrderFilters()">重置</button>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                <tr>
+                                    <th>订单号</th>
+                                    <th>用户ID</th>
+                                    <th>套餐</th>
+                                    <th>金额</th>
+                                    <th>状态</th>
+                                    <th>渠道</th>
+                                    <th>支付渠道单号</th>
+                                    <th>备注</th>
+                                    <th>创建时间</th>
+                                </tr>
+                                </thead>
+                                <tbody id="orderBody">
+                                <tr><td colspan="9"><div class="empty">加载中...</div></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <span class="page-info" id="orderPageInfo">共 0 条</span>
+                            <div class="page-btns">
+                                <button class="btn btn-ghost btn-sm" id="orderPrev" onclick="gotoOrdersPage(-1)">上一页</button>
+                                <span class="page-num" id="orderPageNum">1 / 1</span>
+                                <button class="btn btn-ghost btn-sm" id="orderNext" onclick="gotoOrdersPage(1)">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- ============ 项目与密钥 ============ -->
             <section class="section" id="sec-projects">
                 <div class="section-head" style="justify-content:space-between">
@@ -1005,7 +1103,12 @@
                                 <tr>
                                     <td><code>X-User-Id</code></td>
                                     <td>用户 ID</td>
-                                    <td>调用方标识，用于用量统计与会员日限额；不传视为匿名</td>
+                                    <td>调用方标识，用于用量统计与钻石计费；不传视为匿名</td>
+                                </tr>
+                                <tr>
+                                    <td><code>X-Generation-Id</code></td>
+                                    <td>生成 ID</td>
+                                    <td>同一次 AI 生成的所有调用共用；钻石计费按它聚合成本后结算</td>
                                 </tr>
                                 <tr>
                                     <td><code>Authorization</code></td>
@@ -1421,6 +1524,80 @@ print(resp.json())</pre>
     </div>
 </div>
 
+<!-- ============ 用户充值积分 ============ -->
+<div class="modal-overlay" id="userRechargeOverlay">
+    <div class="modal">
+        <div class="modal-head">
+            <h3>手动充值 / 扣减积分</h3>
+            <button class="modal-close" onclick="closeRechargeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="field" style="margin-bottom:16px">
+                <label>用户ID</label>
+                <input class="input" id="urUserId" readonly>
+                <span class="hint" id="urUserHint"></span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>积分变动量（正数充值、负数扣减）</label>
+                <input class="input" id="urPoints" type="number" step="1" value="100">
+                <span class="hint">等级仅展示：余额 ≥ 1000 为高级会员，否则普通会员</span>
+            </div>
+            <div class="field">
+                <label>备注</label>
+                <input class="input" id="urRemark" placeholder="选填，如：审核赠送">
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeRechargeModal()">取消</button>
+            <button class="btn btn-primary" id="urSubmitBtn" onclick="submitRecharge()">确认提交</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ 用户额度 / 封禁 ============ -->
+<div class="modal-overlay" id="userQuotaOverlay">
+    <div class="modal">
+        <div class="modal-head">
+            <h3>用户额度 / 封禁</h3>
+            <button class="modal-close" onclick="closeQuotaModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="field" style="margin-bottom:16px">
+                <label>用户ID</label>
+                <input class="input" id="uqUserId" readonly>
+                <span class="hint" id="uqUserHint"></span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>当前用量</label>
+                <span class="hint" id="uqUsageHint">加载中...</span>
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>每日 Token 上限</label>
+                <input class="input" id="uqDailyLimit" type="number" step="1" min="0" placeholder="留空 = 不限，0 = 禁止">
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>每月 Token 上限</label>
+                <input class="input" id="uqMonthlyLimit" type="number" step="1" min="0" placeholder="留空 = 不限，0 = 禁止">
+            </div>
+            <div class="field" style="margin-bottom:16px">
+                <label>访问状态</label>
+                <div class="flex">
+                    <input type="checkbox" id="uqBlocked">
+                    <label for="uqBlocked" style="font-size:13px;color:var(--text-2);cursor:pointer">封禁该用户（拒绝所有调用）</label>
+                </div>
+            </div>
+            <div class="field">
+                <label>备注</label>
+                <input class="input" id="uqRemark" placeholder="选填，如：违规限流">
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeQuotaModal()">取消</button>
+            <button class="btn btn-primary" id="uqSaveBtn" onclick="submitQuota()">保存</button>
+        </div>
+    </div>
+</div>
+
 <!-- ============ 鉴权遮罩 ============ -->
 <div class="auth-overlay" id="authOverlay">
     <div class="auth-card">
@@ -1440,21 +1617,23 @@ print(resp.json())</pre>
 
 <script>
 // ==================== 基础状态 ====================
-// ==================== 控制台配置（默认同源单环境） ====================
-// 多环境部署可在本页脚本前注入 window.LLM_CONSOLE_ENVIRONMENTS，例如：
+// ==================== 控制台配置（默认本地/国际/国内三环境） ====================
+// 多环境部署可在本页脚本前注入 window.LLM_CONSOLE_ENVIRONMENTS 整体替换默认值，例如：
 // [{ key:'local', label:'本地环境', apiBase:'http://127.0.0.1:9010/api/v1/model-manage' },
 //  { key:'prod',  label:'生产环境', apiBase:'https://api.example.com/api/v1/model-manage' }]
-// loginUrl 缺省按 apiBase 的 origin 推导为 {origin}/api/v1/auth/login。
+// loginUrl 缺省按 apiBase 的 origin 推导为 {origin}/api/v1/auth/login；
+// apiBase 必须以 /model-manage 结尾（moduleApiBase 依赖该后缀推导其他管理模块地址）。
 const STORAGE_KEY = 'llm_admin_jwt';
-const DEFAULT_ENV = {
-    key: 'current',
-    label: '当前环境',
-    apiBase: '/api/v1/model-manage',
-    loginUrl: '/api/v1/auth/login'
-};
+const ENV_STORAGE_KEY = 'llm_console_env';
+const DEFAULT_ENVIRONMENTS = [
+    { key: 'local', label: '当前站点', apiBase: '/api/v1/model-manage', loginUrl: '/api/v1/auth/login' },
+    { key: 'international', label: '国际环境', apiBase: 'https://www.starggle.com/api/v1/model-manage' },
+    { key: 'domestic', label: '国内环境', apiBase: 'http://124.221.134.139/api/v1/model-manage' }
+];
+const DEFAULT_ENV = DEFAULT_ENVIRONMENTS[0];
 
 function normalizeEnvironments(list) {
-    const source = (Array.isArray(list) && list.length) ? list : [DEFAULT_ENV];
+    const source = (Array.isArray(list) && list.length) ? list : DEFAULT_ENVIRONMENTS;
     return source.map((env, i) => {
         const apiBase = String(env.apiBase || DEFAULT_ENV.apiBase).replace(/\/+$/, '');
         let loginUrl = env.loginUrl;
@@ -1480,6 +1659,7 @@ const SECTION_META = {
     calls:     { title: '调用记录', desc: '按用户、模型与日期检索每一次 LLM 调用明细' },
     providers: { title: '大模型提供商管理', desc: '统一维护提供商名称、API 地址与 API Key' },
     models:    { title: '大模型管理', desc: '管理转发到各提供商的模型配置' },
+    users:     { title: '用户管理', desc: '管理用户、积分、Token 额度与访问封禁' },
     projects:  { title: '项目与密钥', desc: '按项目签发 API Key，设置调用 / Token / 成本配额' },
     health:    { title: '渠道健康', desc: '查看渠道成功率、延迟、熔断与成本路由策略' },
     integration: { title: '接入说明', desc: '接口地址、请求头、集群路由与调用示例' }
@@ -1504,10 +1684,49 @@ let _projectCache = [];         // 项目列表缓存
 let _currentProject = null;     // 当前展开的项目
 let _projectTokens = [];        // 当前项目 Token
 let _healthData = null;         // 渠道健康看板数据
+let _usersPane = 'users';       // 用户管理子 Tab：users / orders
+let _usersPage = 1, _usersPageSize = 20, _usersTotal = 0;
+let _ordersPage = 1, _ordersPageSize = 20, _ordersTotal = 0;
+const _quotaState = { userId: '' };
+let _usersEventsBound = false;
 
 // ==================== 鉴权 ====================
+// 不同环境可能使用不同的 JWT_SECRET_KEY，token 按环境分开存储；
+// 默认环境兼容旧的单一 key，避免升级后强制重新登录。
+function tokenStorageKey() {
+    return STORAGE_KEY + ':' + _env;
+}
+
+function readAuthToken() {
+    let token = null;
+    try { token = localStorage.getItem(tokenStorageKey()); } catch (e) { /* ignore */ }
+    if (!token && _env === ENVIRONMENTS[0].key) {
+        try { token = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    }
+    return token;
+}
+
+function saveAuthToken(token) {
+    try {
+        localStorage.setItem(tokenStorageKey(), token);
+        localStorage.removeItem(STORAGE_KEY);   // 清理旧版单一 key，避免登出后回退登录
+    } catch (e) { /* ignore */ }
+}
+
+function clearAuthToken() {
+    try {
+        localStorage.removeItem(tokenStorageKey());
+        localStorage.removeItem(STORAGE_KEY);
+    } catch (e) { /* ignore */ }
+}
+
+function isInsecureRemote(url) {
+    return /^http:\/\//i.test(url || '')
+        && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(url || '');
+}
+
 function checkAuth() {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = readAuthToken();
     if (saved) {
         _adminToken = saved;
         document.getElementById('authOverlay').classList.remove('active');
@@ -1560,6 +1779,10 @@ async function doUnlock() {
 
     if (!email) { errEl.textContent = '请输入邮箱'; return; }
     if (!pwd) { errEl.textContent = '请输入密码'; return; }
+    if (isInsecureRemote(getLoginUrl())
+        && !confirm('当前环境使用 HTTP 且非本机，登录密码和 JWT 会以明文传输。\n建议改用 HTTPS，确定继续登录？')) {
+        return;
+    }
 
     btn.disabled = true;
     btn.textContent = '登录中...';
@@ -1574,11 +1797,12 @@ async function doUnlock() {
         const result = await res.json();
         if (result?.data?.success) {
             _adminToken = result.data.token;
-            localStorage.setItem(STORAGE_KEY, _adminToken);
+            saveAuthToken(_adminToken);
             document.getElementById('authOverlay').classList.remove('active');
             document.getElementById('btnLock').style.display = '';
             toast('登录成功，欢迎 ' + (result.data.user?.userName || email));
             _loaded = {};
+            resetUsersState();
             _providers = null;
             preloadProviders();
             loadCurrentSection(true);
@@ -1597,17 +1821,20 @@ async function doUnlock() {
 
 function lockPage() {
     _adminToken = null;
-    localStorage.removeItem(STORAGE_KEY);
+    clearAuthToken();
     showAuthOverlay();
     _loaded = {};
     document.getElementById('modelBody').innerHTML = '';
     document.getElementById('providerBody').innerHTML = '';
     document.getElementById('callBody').innerHTML = '';
+    document.getElementById('userBody').innerHTML = '';
+    document.getElementById('orderBody').innerHTML = '';
     document.getElementById('projectBody').innerHTML = '';
     document.getElementById('projectTokenBody').innerHTML = '';
     document.getElementById('healthClusterGrid').innerHTML = '';
     document.getElementById('healthRoutingBody').innerHTML = '';
     document.getElementById('healthChannelBody').innerHTML = '';
+    resetUsersState();
 }
 
 // ==================== API ====================
@@ -1618,6 +1845,8 @@ async function api(method, path, body, base) {
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch((base || API_BASE) + path, opts);
     if (res.status === 401) {
+        _adminToken = null;
+        clearAuthToken();
         showAuthOverlay();
         throw new Error('Unauthorized');
     }
@@ -1748,7 +1977,17 @@ function setInputValue(id, value) {
 }
 
 // ==================== 分区切换 ====================
-function switchSection(name) {
+function isSectionName(name) {
+    return typeof name === 'string'
+        && Object.prototype.hasOwnProperty.call(SECTION_META, name);
+}
+
+function sectionFromHash() {
+    const name = (location.hash || '').replace(/^#\/?/, '');
+    return isSectionName(name) ? name : null;
+}
+
+function applySection(name) {
     _currentSection = name;
     document.querySelectorAll('.nav-item').forEach(el => {
         el.classList.toggle('active', el.dataset.section === name);
@@ -1758,7 +1997,15 @@ function switchSection(name) {
     });
     document.getElementById('pageTitle').textContent = SECTION_META[name].title;
     document.getElementById('pageDesc').textContent = SECTION_META[name].desc;
-    loadCurrentSection();
+}
+
+function switchSection(name) {
+    if (!isSectionName(name)) return;
+    applySection(name);
+    if (location.hash !== '#' + name) {
+        try { history.replaceState(null, '', '#' + name); } catch (e) { /* file:// 等场景忽略 */ }
+    }
+    if (_adminToken) loadCurrentSection();
 }
 
 function loadCurrentSection(force) {
@@ -1767,6 +2014,7 @@ function loadCurrentSection(force) {
         calls: loadCalls,
         providers: loadProviders,
         models: loadModels,
+        users: loadUsersSection,
         projects: loadProjects,
         health: loadHealth,
         integration: null
@@ -1777,6 +2025,7 @@ function loadCurrentSection(force) {
 
 function refreshSection() {
     _loaded = {};
+    resetUsersState();
     _providers = null;
     _companyCache = null;
     _projectCache = [];
@@ -1793,6 +2042,10 @@ function switchEnv(envKey) {
     if (!env) return;
     _env = env.key;
     API_BASE = env.apiBase;
+    try { localStorage.setItem(ENV_STORAGE_KEY, _env); } catch (e) { /* ignore */ }
+    if (isInsecureRemote(env.apiBase)) {
+        toast('该环境使用 HTTP，管理员凭据会明文传输，建议改用 HTTPS', false);
+    }
     renderEnvironments();
     _providers = null;
     _companyCache = null;
@@ -1802,6 +2055,7 @@ function switchEnv(envKey) {
     _projectTokens = [];
     _healthData = null;
     _loaded = {};
+    resetUsersState();
     _callsPage = 1;
     hideProjectDetail();
     if (checkAuth()) {
@@ -3265,12 +3519,418 @@ async function resetChannel(modelId) {
     }
 }
 
+// ==================== 用户 / 订单管理 ====================
+function userApi(method, path, body) {
+    return api(method, path, body, moduleApiBase('user-manage'));
+}
+
+function loadUsersSection(force) {
+    if (_usersPane === 'orders') {
+        if (_loaded.userOrders && !force) return;
+        loadOrders();
+    } else {
+        if (_loaded.users && !force) return;
+        loadUsers();
+    }
+}
+
+function levelTag(level) {
+    const cls = {
+        free: 'tag-gray', senior: 'tag-blue',
+        // 订阅制遗留档位（仅存量订单展示）
+        silver: 'tag-gray', gold: 'tag-orange', diamond: 'tag-blue',
+        plus: 'tag-green', pro: 'tag-purple', points: 'tag-purple'
+    }[level] || 'tag-gray';
+    const label = {
+        free: '普通', senior: '高级',
+        silver: '白银', gold: '黄金', diamond: '钻石',
+        plus: 'Plus', pro: 'Pro', points: '积分变动'
+    }[level] || level || '-';
+    return `<span class="tag ${cls}">${esc(label)}</span>`;
+}
+
+function accessTag(status) {
+    return status === 'blocked'
+        ? '<span class="tag tag-red">封禁</span>'
+        : '<span class="tag tag-green">正常</span>';
+}
+
+function orderStatusTag(status) {
+    const cls = {
+        paid: 'tag-green', pending: 'tag-orange', cancelled: 'tag-red',
+        failed: 'tag-red', refunded: 'tag-purple'
+    }[status] || 'tag-gray';
+    const label = {
+        paid: '已支付', pending: '待支付', cancelled: '已取消',
+        failed: '失败', refunded: '已退款'
+    }[status] || status || '-';
+    return `<span class="tag ${cls}">${esc(label)}</span>`;
+}
+
+function fmtOrderAmount(o) {
+    const value = Number(o.amountCents ?? 0);
+    if (o.currency === 'PTS') return fmt(value) + ' 点';
+    return (o.currency || '-') + ' ' + (value / 100).toFixed(2);
+}
+
+function fmtTokenLimit(value) {
+    if (value === null || value === undefined) return '不限';
+    if (Number(value) === 0) return '禁止';
+    return fmtCompact(value);
+}
+
+function shortUserId(value) {
+    const uid = String(value || '');
+    if (!uid) return '-';
+    return uid.length > 10 ? uid.slice(0, 10) + '…' : uid;
+}
+
+function renderUsers(list) {
+    const tbody = document.getElementById('userBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="10"><div class="empty">暂无用户</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(u => {
+        const uid = String(u.userId || '');
+        const info = `${u.userName || ''} ${u.email || ''}`.trim();
+        return `
+            <tr>
+                <td class="mono" title="${esc(uid)}">${esc(shortUserId(uid))}</td>
+                <td style="white-space:nowrap">${esc(u.userName || '-')}</td>
+                <td>${esc(u.email || '-')}</td>
+                <td class="num" style="white-space:nowrap">${fmt(u.pointBalance ?? 0)} 点</td>
+                <td>${levelTag(u.membershipLevel)}</td>
+                <td class="num" style="white-space:nowrap">${fmt(u.todayUsed ?? 0)} 次</td>
+                <td class="muted" title="今日 ${fmt(u.todayTokens ?? 0)} / ${fmtLimit(u.dailyTokenLimit)}；本月 ${fmt(u.monthTokens ?? 0)} / ${fmtLimit(u.monthlyTokenLimit)}">
+                    <div>${fmtCompact(u.todayTokens ?? 0)} / ${fmtTokenLimit(u.dailyTokenLimit)}</div>
+                    <div>${fmtCompact(u.monthTokens ?? 0)} / ${fmtTokenLimit(u.monthlyTokenLimit)}</div>
+                </td>
+                <td>${accessTag(u.accessStatus)}</td>
+                <td class="muted">${esc(fmtDateTime(u.createdAt))}</td>
+                <td class="actions" style="justify-content:flex-end">
+                    <button class="btn btn-primary btn-sm" data-action="recharge"
+                            data-user-id="${esc(uid)}" data-info="${esc(info)}">充值积分</button>
+                    <button class="btn btn-ghost btn-sm" data-action="quota"
+                            data-user-id="${esc(uid)}" data-info="${esc(info)}">额度/封禁</button>
+                    <button class="btn btn-link danger btn-sm" data-action="reset"
+                            data-user-id="${esc(uid)}" data-name="${esc(u.userName || '')}"
+                            title="重置今日调用次数（只重置调用计数，Token 计数与明细保留）">重置</button>
+                </td>
+            </tr>`;
+    }).join('');
+}
+
+function renderUserPagination() {
+    const pages = Math.max(1, Math.ceil(_usersTotal / _usersPageSize));
+    document.getElementById('userPageInfo').textContent = '共 ' + fmt(_usersTotal) + ' 条';
+    document.getElementById('userPageNum').textContent = _usersPage + ' / ' + pages;
+    document.getElementById('userPrev').disabled = _usersPage <= 1;
+    document.getElementById('userNext').disabled = _usersPage >= pages;
+}
+
+async function loadUsers() {
+    const tbody = document.getElementById('userBody');
+    tbody.innerHTML = '<tr><td colspan="10"><div class="empty">加载中...</div></td></tr>';
+    const params = new URLSearchParams();
+    const keyword = document.getElementById('userKeyword').value.trim();
+    if (keyword) params.set('keyword', keyword);
+    params.set('page', _usersPage);
+    params.set('page_size', _usersPageSize);
+    try {
+        const result = await userApi('GET', '/list?' + params.toString());
+        const list = result?.data?.list || [];
+        _usersTotal = result?.data?.total || 0;
+        renderUsers(list);
+        renderUserPagination();
+        _loaded.users = true;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="10"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function gotoUsersPage(delta) {
+    const pages = Math.max(1, Math.ceil(_usersTotal / _usersPageSize));
+    const next = _usersPage + delta;
+    if (next < 1 || next > pages) return;
+    _usersPage = next;
+    loadUsers();
+}
+
+function searchUsers() {
+    _usersPage = 1;
+    loadUsers();
+}
+
+function renderOrders(list) {
+    const tbody = document.getElementById('orderBody');
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">暂无订单</div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = list.map(o => `
+        <tr>
+            <td class="mono">${esc(o.orderNo || '-')}</td>
+            <td class="mono" title="${esc(o.userId || '')}">${esc(shortUserId(o.userId))}</td>
+            <td>${levelTag(o.plan)}</td>
+            <td class="num">${esc(fmtOrderAmount(o))}</td>
+            <td>${orderStatusTag(o.status)}</td>
+            <td>${esc(o.channel || '-')}</td>
+            <td class="mono">${esc(o.providerOrderId || '-')}</td>
+            <td class="muted">${esc(o.remark || '-')}</td>
+            <td class="muted">${esc(fmtDateTime(o.createdAt))}</td>
+        </tr>`).join('');
+}
+
+function renderOrderPagination() {
+    const pages = Math.max(1, Math.ceil(_ordersTotal / _ordersPageSize));
+    document.getElementById('orderPageInfo').textContent = '共 ' + fmt(_ordersTotal) + ' 条';
+    document.getElementById('orderPageNum').textContent = _ordersPage + ' / ' + pages;
+    document.getElementById('orderPrev').disabled = _ordersPage <= 1;
+    document.getElementById('orderNext').disabled = _ordersPage >= pages;
+}
+
+async function loadOrders() {
+    const tbody = document.getElementById('orderBody');
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载中...</div></td></tr>';
+    const params = new URLSearchParams();
+    const userId = document.getElementById('orderUserId').value.trim();
+    const status = document.getElementById('orderStatus').value;
+    if (userId) params.set('user_id', userId);
+    if (status) params.set('status', status);
+    params.set('page', _ordersPage);
+    params.set('page_size', _ordersPageSize);
+    try {
+        const result = await userApi('GET', '/orders?' + params.toString());
+        const list = result?.data?.list || [];
+        _ordersTotal = result?.data?.total || 0;
+        renderOrders(list);
+        renderOrderPagination();
+        _loaded.userOrders = true;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty">加载失败</div></td></tr>';
+    }
+}
+
+function gotoOrdersPage(delta) {
+    const pages = Math.max(1, Math.ceil(_ordersTotal / _ordersPageSize));
+    const next = _ordersPage + delta;
+    if (next < 1 || next > pages) return;
+    _ordersPage = next;
+    loadOrders();
+}
+
+function searchOrders() {
+    _ordersPage = 1;
+    loadOrders();
+}
+
+function resetOrderFilters() {
+    setInputValue('orderUserId', '');
+    setInputValue('orderStatus', '');
+    _ordersPage = 1;
+    loadOrders();
+}
+
+function switchUsersPane(pane) {
+    _usersPane = pane === 'orders' ? 'orders' : 'users';
+    document.querySelectorAll('#usersPaneSwitch button').forEach((el, i) => {
+        el.classList.toggle('active',
+            (_usersPane === 'users' && i === 0) || (_usersPane === 'orders' && i === 1));
+    });
+    document.getElementById('pane-users').style.display = _usersPane === 'users' ? '' : 'none';
+    document.getElementById('pane-orders').style.display = _usersPane === 'orders' ? '' : 'none';
+    loadUsersSection();
+}
+
+function bindUsersEvents() {
+    const tbody = document.getElementById('userBody');
+    if (!tbody || _usersEventsBound) return;
+    _usersEventsBound = true;
+    tbody.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const { action, userId, info, name } = btn.dataset;
+        if (action === 'recharge') openRecharge(userId, info);
+        else if (action === 'quota') openQuota(userId, info);
+        else if (action === 'reset') resetCallCount(userId, name);
+    });
+}
+
+function resetUsersState() {
+    _usersPage = 1;
+    _ordersPage = 1;
+    _usersTotal = 0;
+    _ordersTotal = 0;
+    _quotaState.userId = '';
+    closeRechargeModal();
+    closeQuotaModal();
+}
+
+// ---------- 充值 / 扣减积分 ----------
+function openRecharge(userId, info) {
+    setInputValue('urUserId', userId);
+    document.getElementById('urUserHint').textContent = info || '';
+    document.getElementById('urPoints').value = 100;
+    setInputValue('urRemark', '');
+    document.getElementById('userRechargeOverlay').classList.add('active');
+}
+
+function closeRechargeModal() {
+    document.getElementById('userRechargeOverlay').classList.remove('active');
+}
+
+async function submitRecharge() {
+    const userId = document.getElementById('urUserId').value.trim();
+    const points = parseInt(document.getElementById('urPoints').value, 10);
+    const remark = document.getElementById('urRemark').value.trim();
+
+    if (!userId) { toast('参数不完整', false); return; }
+    if (!Number.isInteger(points) || points === 0) { toast('积分变动量不能为 0', false); return; }
+    if (Math.abs(points) > 1000000) { toast('单次积分变动量过大', false); return; }
+
+    const btn = document.getElementById('urSubmitBtn');
+    if (btn.disabled) return;          // 防双击重复充值（后端非幂等）
+    btn.disabled = true;
+    try {
+        const result = await userApi('POST', '/recharge-points', {
+            user_id: userId, points, remark: remark || null
+        });
+        if (result.code === 200) {
+            toast(`${points > 0 ? '充值' : '扣减'}成功，当前余额：${result.data.pointBalance} 点`);
+            _loaded.users = false;
+            _loaded.userOrders = false;
+            closeRechargeModal();
+            loadUsersSection(true);
+        } else {
+            toast(result.message || '操作失败', false);
+        }
+    } catch (e) {
+        toast('操作失败，请检查登录状态', false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ---------- 额度 / 封禁 ----------
+function openQuota(userId, info) {
+    const requestId = (_quotaState.requestId || 0) + 1;
+    _quotaState.requestId = requestId;
+    _quotaState.userId = userId;
+    setInputValue('uqUserId', userId);
+    document.getElementById('uqUserHint').textContent = info || '';
+    document.getElementById('uqUsageHint').textContent = '加载中...';
+    setInputValue('uqDailyLimit', '');
+    setInputValue('uqMonthlyLimit', '');
+    setInputValue('uqRemark', '');
+    document.getElementById('uqBlocked').checked = false;
+    // 策略加载完成前禁止保存，避免把空表单（unban + 清空限额）写回
+    document.getElementById('uqSaveBtn').disabled = true;
+    document.getElementById('userQuotaOverlay').classList.add('active');
+
+    userApi('GET', '/' + encodeURIComponent(userId) + '/quota').then(result => {
+        if (requestId !== _quotaState.requestId || _quotaState.userId !== userId) return;
+        if (result.code !== 200) {
+            document.getElementById('uqUsageHint').textContent = '加载失败，请关闭后重试';
+            toast(result.message || '加载失败', false);
+            return;
+        }
+        const d = result.data || {};
+        setInputValue('uqDailyLimit', d.dailyTokenLimit);
+        setInputValue('uqMonthlyLimit', d.monthlyTokenLimit);
+        setInputValue('uqRemark', d.remark);
+        document.getElementById('uqBlocked').checked = d.accessStatus === 'blocked';
+        document.getElementById('uqUsageHint').textContent =
+            `今日 ${fmt(d.todayCalls ?? 0)} 次 / ${fmt(d.todayTokens ?? 0)} tokens；` +
+            `本月 ${fmt(d.monthCalls ?? 0)} 次 / ${fmt(d.monthTokens ?? 0)} tokens` +
+            (d.userExists === false ? '（user_info 中不存在该用户）' : '');
+        document.getElementById('uqSaveBtn').disabled = false;
+    }).catch(() => {
+        if (requestId !== _quotaState.requestId) return;
+        document.getElementById('uqUsageHint').textContent = '加载失败，请关闭后重试';
+        toast('加载配额失败，请检查登录状态', false);
+    });
+}
+
+function closeQuotaModal() {
+    _quotaState.requestId = (_quotaState.requestId || 0) + 1;   // 使进行中的加载响应失效
+    _quotaState.userId = '';
+    document.getElementById('userQuotaOverlay').classList.remove('active');
+}
+
+async function submitQuota() {
+    const userId = _quotaState.userId;
+    if (!userId) { toast('参数不完整', false); return; }
+    const dailyRaw = document.getElementById('uqDailyLimit').value.trim();
+    const monthlyRaw = document.getElementById('uqMonthlyLimit').value.trim();
+    const daily = dailyRaw === '' ? null : parseInt(dailyRaw, 10);
+    const monthly = monthlyRaw === '' ? null : parseInt(monthlyRaw, 10);
+    if (daily !== null && (!Number.isInteger(daily) || daily < 0)) {
+        toast('每日 Token 上限必须是非负整数', false); return;
+    }
+    if (monthly !== null && (!Number.isInteger(monthly) || monthly < 0)) {
+        toast('每月 Token 上限必须是非负整数', false); return;
+    }
+    const btn = document.getElementById('uqSaveBtn');
+    if (btn.disabled) return;          // 未加载完成或请求进行中
+    btn.disabled = true;
+    try {
+        const result = await userApi('PUT', '/' + encodeURIComponent(userId) + '/quota', {
+            daily_token_limit: daily,
+            monthly_token_limit: monthly,
+            access_status: document.getElementById('uqBlocked').checked ? 'blocked' : 'active',
+            remark: document.getElementById('uqRemark').value.trim() || null
+        });
+        if (result.code === 200) {
+            toast('已保存用户额度');
+            _loaded.users = false;
+            closeQuotaModal();
+            loadUsers();
+        } else {
+            toast(result.message || '保存失败', false);
+        }
+    } catch (e) {
+        toast('保存失败，请检查登录状态', false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ---------- 重置今日调用次数 ----------
+async function resetCallCount(userId, name) {
+    const label = name ? `「${name}」` : '';
+    if (!confirm(`确认重置 ${label} 今日调用次数？\n只重置调用计数，Token 计数与用量明细保留。`)) return;
+    try {
+        const result = await userApi('POST', '/reset-call-count', { user_id: userId });
+        if (result.code === 200) {
+            toast(`已重置调用次数（影响 ${result.data.updatedRows ?? 0} 行），Token 计数保留`);
+            _loaded.users = false;
+            loadUsers();
+        } else {
+            toast(result.message || '重置失败', false);
+        }
+    } catch (e) {
+        toast('重置失败，请检查登录状态', false);
+    }
+}
+
 // ==================== 初始化 ====================
+try {
+    const savedEnv = ENVIRONMENTS.find(e => e.key === localStorage.getItem(ENV_STORAGE_KEY));
+    if (savedEnv) { _env = savedEnv.key; API_BASE = savedEnv.apiBase; }
+} catch (e) { /* ignore */ }
 renderEnvironments();
+bindUsersEvents();
+const initialSection = sectionFromHash();
+if (initialSection) applySection(initialSection);
 if (checkAuth()) {
     preloadProviders();
     loadCurrentSection();
 }
+window.addEventListener('hashchange', () => {
+    const name = sectionFromHash() || 'usage';
+    if (name !== _currentSection) switchSection(name);
+});
 </script>
 </body>
 </html>
