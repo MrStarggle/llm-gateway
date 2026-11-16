@@ -141,7 +141,7 @@ Chatbox 风格客户端，直接调用网关的 `/v1/chat/completions`：
 
 ## 用户配额与封禁
 
-控制台「用户管理」分区（`/#users`，旧地址 `/user-manage` 会自动重定向）可为单个用户设置：
+控制台「用户管理」分区（`/model-manage#users`，旧地址 `/user-manage` 会自动重定向）可为单个用户设置：
 
 - 每日 Token 上限、每月 Token 上限：留空 = 不限，`0` = 禁止
 - 访问封禁开关：被封禁用户的调用直接返回 `403`（错误码 `user_blocked`）

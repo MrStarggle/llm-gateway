@@ -124,7 +124,7 @@ async def manage_page():
 @app.get("/user-manage")
 async def user_manage_page():
     """用户管理已集成到控制台，旧地址重定向到「用户管理」分区."""
-    return RedirectResponse(url="/#users", status_code=307)
+    return RedirectResponse(url="/model-manage#users", status_code=307)
 
 
 @app.get("/chat", response_class=HTMLResponse)

@@ -42,4 +42,4 @@ class BusinessAdminApiTest(BusinessGatewayTestCase):
     async def test_user_manage_page_redirects_to_console_section(self):
         resp = await self.client.get("/user-manage", follow_redirects=False)
         self.assertEqual(resp.status_code, 307)
-        self.assertEqual(resp.headers["location"], "/#users")
+        self.assertEqual(resp.headers["location"], "/model-manage#users")
