@@ -1,4 +1,6 @@
 """business-sync 项目管理与渠道健康 API 冒烟测试"""
+from app.schemas.model_manage import ModelManageCreate
+from app.services import model_manage_service
 from tests_business.base import BusinessGatewayTestCase
 
 
@@ -43,3 +45,24 @@ class BusinessAdminApiTest(BusinessGatewayTestCase):
         resp = await self.client.get("/user-manage", follow_redirects=False)
         self.assertEqual(resp.status_code, 307)
         self.assertEqual(resp.headers["location"], "/model-manage#users")
+
+    async def test_model_copy_batch_order(self):
+        """复制模型沿用源批次，列表中副本紧跟源模型；新批次排在最前。"""
+        async with self.Session() as db:
+            source = await model_manage_service.create_model(db, ModelManageCreate(
+                ai_model_name="copy-src", com_name="mock", com_url="https://mock/v1",
+                api_key="k", is_using="1", batch_no=1000,
+            ))
+            copied = await model_manage_service.create_model(db, ModelManageCreate(
+                ai_model_name="copy-src", com_name="mock", com_url="https://mock/v1",
+                api_key="k", is_using="1", batch_no=1000,
+            ))
+            newer = await model_manage_service.create_model(db, ModelManageCreate(
+                ai_model_name="newer", com_name="mock", com_url="https://mock/v1",
+                api_key="k", is_using="1", batch_no=2000,
+            ))
+            rows = await model_manage_service.get_model_list(db)
+
+        ids = [m.ai_model_id for m in rows]
+        self.assertEqual(ids[0], newer.ai_model_id)
+        self.assertEqual(ids[1:3], [source.ai_model_id, copied.ai_model_id])

@@ -49,7 +49,8 @@
         els.sidebarToggle = $('#sidebarToggle');
         els.convTitle = $('#convTitle');
         els.convSub = $('#convSub');
-        els.modelInput = $('#modelInput');
+        els.modelPickerBtn = $('#modelPickerBtn');
+        els.modelPickerValue = $('#modelPickerValue');
         els.modelOptions = $('#modelOptions');
         els.systemPromptBtn = $('#systemPromptBtn');
         els.exportBtn = $('#exportBtn');
@@ -57,6 +58,7 @@
         els.messageInput = $('#messageInput');
         els.sendBtn = $('#sendBtn');
         els.composerHint = $('#composerHint');
+        els.thinkingToggle = $('#thinkingToggle');
         els.settingsModal = $('#settingsModal');
         els.settingsApiKey = $('#settingsApiKey');
         els.settingsModel = $('#settingsModel');
@@ -65,6 +67,21 @@
         els.settingsSave = $('#settingsSave');
         els.settingsCancel = $('#settingsCancel');
         els.settingsClose = $('#settingsClose');
+        els.modelConfigModal = $('#modelConfigModal');
+        els.providerCombo = $('#providerCombo');
+        els.providerField = $('#providerField');
+        els.providerList = $('#providerList');
+        els.modelCombo = $('#modelCombo');
+        els.modelField = $('#modelField');
+        els.modelFieldList = $('#modelFieldList');
+        els.modelFieldHint = $('#modelFieldHint');
+        els.paramTemperature = $('#paramTemperature');
+        els.paramTopP = $('#paramTopP');
+        els.paramTopK = $('#paramTopK');
+        els.paramMaxTokens = $('#paramMaxTokens');
+        els.modelConfigSave = $('#modelConfigSave');
+        els.modelConfigCancel = $('#modelConfigCancel');
+        els.modelConfigClose = $('#modelConfigClose');
         els.toast = $('#toast');
     }
 
@@ -276,6 +293,22 @@
         };
     }
 
+    function optionalNumber(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+    }
+
+    function normalizeParams(raw) {
+        const source = raw && typeof raw === 'object' ? raw : {};
+        return {
+            temperature: optionalNumber(source.temperature),
+            topP: optionalNumber(source.topP != null ? source.topP : source.top_p),
+            topK: optionalNumber(source.topK != null ? source.topK : source.top_k),
+            maxTokens: optionalNumber(source.maxTokens != null ? source.maxTokens : source.max_tokens),
+        };
+    }
+
     function normalizeConversation(raw) {
         if (!raw || typeof raw !== 'object') return null;
         return {
@@ -284,7 +317,10 @@
             createdAt: raw.createdAt || now(),
             updatedAt: raw.updatedAt || raw.createdAt || now(),
             model: typeof raw.model === 'string' ? raw.model : '',
+            provider: typeof raw.provider === 'string' ? raw.provider : '',
             asyncType: typeof raw.asyncType === 'string' ? raw.asyncType : '',
+            params: normalizeParams(raw.params),
+            thinking: raw.thinking === true,
             systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt
                 : (typeof raw.system_prompt === 'string' ? raw.system_prompt : ''),
             messages: Array.isArray(raw.messages) ? raw.messages.map(normalizeMessage).filter(Boolean) : [],
@@ -360,7 +396,10 @@
             createdAt: now(),
             updatedAt: now(),
             model: firstModel ? firstModel.id : '',
+            provider: firstModel ? (providersOfModel(firstModel)[0] || '') : '',
             asyncType: firstModel ? (firstModel.x_async_type || '') : '',
+            params: normalizeParams(null),
+            thinking: false,
             systemPrompt: state.settings.systemPrompt || '',
             messages: [],
         };
@@ -383,7 +422,6 @@
         if (!conv) return;
         state.currentId = id;
         state.autoScroll = true;
-        els.modelInput.value = conv.model || '';
         renderAll();
         closeSidebar();
         els.messageInput.focus();
@@ -394,6 +432,8 @@
         renderHeader();
         renderMessages();
         updateComposer();
+        updateModelPicker();
+        updateThinkingToggle();
     }
 
     function renderHeader() {
@@ -406,9 +446,10 @@
         els.convTitle.textContent = conv.title || '新对话';
         const userCount = conv.messages.filter(function (msg) { return msg.role === 'user'; }).length;
         const model = conv.model || '未选择模型';
+        const provider = conv.provider ? ' · ' + conv.provider : '';
         const cluster = conv.asyncType ? ' · ' + conv.asyncType : '';
         const status = state.generating ? '正在生成' : '本地保存';
-        els.convSub.textContent = model + cluster + ' · ' + userCount + ' 条消息 · ' + status;
+        els.convSub.textContent = model + provider + cluster + ' · ' + userCount + ' 条消息 · ' + status;
     }
 
     function renderList() {
@@ -676,9 +717,59 @@
         }).join('');
     }
 
+    function providersOfModel(model) {
+        if (!model) return [];
+        if (Array.isArray(model.x_providers) && model.x_providers.length) {
+            return model.x_providers.filter(Boolean);
+        }
+        return model.owned_by ? [model.owned_by] : [];
+    }
+
+    function findModel(modelId) {
+        return state.models.find(function (model) { return model.id === modelId; }) || null;
+    }
+
     function resolveCluster(modelId) {
-        const found = state.models.find(function (model) { return model.id === modelId; });
+        const found = findModel(modelId);
         return found ? (found.x_async_type || '') : '';
+    }
+
+    function providerForModel(modelId, preferred) {
+        const list = providersOfModel(findModel(modelId));
+        if (preferred && list.indexOf(preferred) >= 0) return preferred;
+        return list[0] || preferred || '';
+    }
+
+    function allProviders(keyword) {
+        const term = String(keyword || '').trim().toLowerCase();
+        const set = new Set();
+        state.models.forEach(function (model) {
+            providersOfModel(model).forEach(function (name) { set.add(name); });
+        });
+        return Array.from(set).filter(function (name) {
+            return !term || name.toLowerCase().indexOf(term) >= 0;
+        }).sort(function (a, b) { return a.localeCompare(b); });
+    }
+
+    function modelsFor(provider, keyword) {
+        const term = String(keyword || '').trim().toLowerCase();
+        return state.models.filter(function (model) {
+            if (provider && providersOfModel(model).indexOf(provider) < 0) return false;
+            return !term || model.id.toLowerCase().indexOf(term) >= 0;
+        });
+    }
+
+    function updateModelPicker() {
+        const conv = currentConversation();
+        const name = conv && conv.model ? conv.model : '';
+        els.modelPickerValue.textContent = name || '选择模型';
+        els.modelPickerValue.classList.toggle('is-empty', !name);
+        els.modelPickerBtn.title = name ? '模型：' + name : '选择模型与参数';
+    }
+
+    function updateThinkingToggle() {
+        const conv = currentConversation();
+        els.thinkingToggle.checked = !!(conv && conv.thinking);
     }
 
     async function loadModels() {
@@ -693,6 +784,7 @@
                     if (state.settings.apiKey) showToast('API Key 无效或已过期', false);
                 }
                 renderModelOptions();
+                updateModelPicker();
                 return;
             }
             const data = await res.json();
@@ -705,23 +797,177 @@
 
         const conv = currentConversation();
         if (conv && !conv.model && state.models[0]) {
-            conv.model = state.models[0].id;
-            conv.asyncType = state.models[0].x_async_type || '';
-            els.modelInput.value = conv.model;
+            const first = state.models[0];
+            conv.model = first.id;
+            conv.provider = providersOfModel(first)[0] || '';
+            conv.asyncType = first.x_async_type || '';
             schedulePersist(conv, true);
-            renderHeader();
+        }
+        updateModelPicker();
+    }
+
+    // ---- 模型配置弹窗 ----
+    function setComboOpen(combo, listEl, open) {
+        combo.classList.toggle('open', open);
+        listEl.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+
+    function renderProviderList(keyword) {
+        const providers = allProviders(keyword);
+        if (!providers.length) {
+            els.providerList.innerHTML = '<div class="combo-empty">暂无可用运营商</div>';
+            return;
+        }
+        els.providerList.innerHTML = providers.map(function (name) {
+            const count = modelsFor(name, '').length;
+            return '<div class="combo-item" role="option" data-provider="' + escapeHtml(name) + '">'
+                + '<strong>' + escapeHtml(name) + '</strong>'
+                + '<span class="ci-meta">' + count + ' 个模型</span></div>';
+        }).join('');
+    }
+
+    function updateModelFieldHint() {
+        const provider = els.providerField.value.trim();
+        if (!state.models.length) {
+            els.modelFieldHint.textContent = '暂无可用模型，请先在管理台启用文本模型';
+            return;
+        }
+        const count = modelsFor(provider, '').length;
+        els.modelFieldHint.textContent = provider
+            ? '运营商「' + provider + '」下可用 ' + count + ' 个模型，也可直接输入模型名'
+            : '未限定运营商，共 ' + state.models.length + ' 个可用模型';
+    }
+
+    function renderModelFieldList(keyword) {
+        const provider = els.providerField.value.trim();
+        const list = modelsFor(provider, keyword);
+        if (!list.length) {
+            els.modelFieldList.innerHTML = '<div class="combo-empty">'
+                + (state.models.length ? '该运营商下没有匹配的模型' : '暂无可用模型') + '</div>';
+            updateModelFieldHint();
+            return;
+        }
+        els.modelFieldList.innerHTML = list.map(function (model) {
+            const clusters = (model.x_clusters || []).join(' / ');
+            return '<div class="combo-item" role="option" data-model="' + escapeHtml(model.id) + '">'
+                + '<span>' + escapeHtml(model.id) + '</span>'
+                + '<span class="ci-meta">' + escapeHtml(clusters) + '</span></div>';
+        }).join('');
+        updateModelFieldHint();
+    }
+
+    function syncSamplingConflict() {
+        const tempEl = els.paramTemperature;
+        const topPEl = els.paramTopP;
+        tempEl.disabled = false;
+        topPEl.disabled = false;
+        if (tempEl.value.trim()) {
+            topPEl.value = '';
+            topPEl.disabled = true;
+        } else if (topPEl.value.trim()) {
+            tempEl.value = '';
+            tempEl.disabled = true;
         }
     }
 
-    function onModelChange() {
-        const conv = currentConversation();
-        if (!conv) return;
-        const value = els.modelInput.value.trim();
-        conv.model = value;
-        conv.asyncType = resolveCluster(value);
+    function onSamplingInput(source) {
+        const tempEl = els.paramTemperature;
+        const topPEl = els.paramTopP;
+        if (source === 'temperature') {
+            if (tempEl.value.trim()) {
+                topPEl.value = '';
+                topPEl.disabled = true;
+            } else {
+                topPEl.disabled = false;
+            }
+        } else if (topPEl.value.trim()) {
+            tempEl.value = '';
+            tempEl.disabled = true;
+        } else {
+            tempEl.disabled = false;
+        }
+    }
+
+    function paramInputValue(el) {
+        const raw = el.value.trim();
+        return raw ? Number(raw) : null;
+    }
+
+    function readParamsFromForm() {
+        const temperature = paramInputValue(els.paramTemperature);
+        const topP = paramInputValue(els.paramTopP);
+        const topK = paramInputValue(els.paramTopK);
+        const maxTokens = paramInputValue(els.paramMaxTokens);
+        if (temperature !== null && (isNaN(temperature) || temperature < 0 || temperature > 2)) {
+            showToast('temperature 需在 0 ~ 2 之间', false);
+            return null;
+        }
+        if (topP !== null && (isNaN(topP) || topP < 0 || topP > 1)) {
+            showToast('top_p 需在 0 ~ 1 之间', false);
+            return null;
+        }
+        if (topK !== null && (!Number.isInteger(topK) || topK < 1)) {
+            showToast('top_k 需为正整数', false);
+            return null;
+        }
+        if (maxTokens !== null && (!Number.isInteger(maxTokens) || maxTokens < 1)) {
+            showToast('max_tokens 需为正整数', false);
+            return null;
+        }
+        if (temperature !== null && topP !== null) {
+            showToast('temperature 与 top_p 只能填写一个', false);
+            return null;
+        }
+        return { temperature: temperature, topP: topP, topK: topK, maxTokens: maxTokens };
+    }
+
+    function openModelConfig() {
+        const conv = ensureConversation();
+        const provider = conv.provider || providerForModel(conv.model);
+        els.providerField.value = provider;
+        els.modelField.value = conv.model || '';
+        const params = normalizeParams(conv.params);
+        els.paramTemperature.value = params.temperature !== null ? params.temperature : '';
+        els.paramTopP.value = params.topP !== null ? params.topP : '';
+        els.paramTopK.value = params.topK !== null ? params.topK : '';
+        els.paramMaxTokens.value = params.maxTokens !== null ? params.maxTokens : '';
+        syncSamplingConflict();
+        renderProviderList('');
+        renderModelFieldList('');
+        setComboOpen(els.providerCombo, els.providerList, false);
+        setComboOpen(els.modelCombo, els.modelFieldList, false);
+        els.modelConfigModal.classList.add('active');
+        setTimeout(function () { els.modelConfigClose.focus(); }, 60);
+    }
+
+    function closeModelConfig() {
+        const wasActive = els.modelConfigModal.classList.contains('active');
+        els.modelConfigModal.classList.remove('active');
+        setComboOpen(els.providerCombo, els.providerList, false);
+        setComboOpen(els.modelCombo, els.modelFieldList, false);
+        if (wasActive) els.modelPickerBtn.focus();
+    }
+
+    function applyModelConfig() {
+        const conv = ensureConversation();
+        const model = els.modelField.value.trim();
+        if (!model) {
+            showToast('请选择或输入模型', false);
+            els.modelField.focus();
+            return;
+        }
+        const params = readParamsFromForm();
+        if (!params) return;
+        const provider = els.providerField.value.trim();
+        conv.model = model;
+        conv.provider = providerForModel(model, provider);
+        conv.asyncType = resolveCluster(model);
+        conv.params = params;
         conv.updatedAt = now();
         schedulePersist(conv, true);
-        renderHeader();
+        renderAll();
+        closeModelConfig();
+        showToast('模型配置已应用');
     }
 
     // ============ Markdown ============
@@ -861,10 +1107,10 @@
         if (!text) return;
 
         const conv = ensureConversation();
-        const model = (els.modelInput.value || conv.model || '').trim();
+        const model = (conv.model || '').trim();
         if (!model) {
-            showToast('请先选择或输入模型', false);
-            openSettings();
+            showToast('请先选择模型', false);
+            openModelConfig();
             return;
         }
         conv.model = model;
@@ -892,10 +1138,10 @@
 
     async function runCompletion(conv) {
         if (state.generating) return;
-        const model = (conv.model || els.modelInput.value || '').trim();
+        const model = (conv.model || '').trim();
         if (!model) {
-            showToast('请先选择或输入模型', false);
-            openSettings();
+            showToast('请先选择模型', false);
+            openModelConfig();
             return;
         }
         const payloadMessages = buildMessages(conv);
@@ -923,19 +1169,27 @@
         const headers = { 'Content-Type': 'application/json' };
         if (state.settings.apiKey) headers.Authorization = 'Bearer ' + state.settings.apiKey;
         if (conv.asyncType) headers['X-Async-Type'] = conv.asyncType;
+        headers['X-Thinking'] = conv.thinking ? '1' : '0';
         headers['X-User-Id'] = 'local-chat';
         headers['X-Feature-Code'] = 'chat_ui';
         headers['X-Session-Id'] = conv.id;
+
+        const params = normalizeParams(conv.params);
+        const payload = {
+            model: model,
+            messages: payloadMessages,
+            stream: true,
+        };
+        if (params.temperature !== null) payload.temperature = params.temperature;
+        if (params.topP !== null) payload.top_p = params.topP;
+        if (params.topK !== null) payload.top_k = params.topK;
+        if (params.maxTokens !== null) payload.max_tokens = params.maxTokens;
 
         try {
             const response = await fetch(API_CHAT, {
                 method: 'POST',
                 headers: headers,
-                body: JSON.stringify({
-                    model: model,
-                    messages: payloadMessages,
-                    stream: true,
-                }),
+                body: JSON.stringify(payload),
                 signal: state.abortController.signal,
             });
 
@@ -1166,11 +1420,9 @@
             })[0];
             if (next) {
                 state.currentId = next.id;
-                els.modelInput.value = next.model || '';
                 renderAll();
             } else {
-                const created = createConversation();
-                els.modelInput.value = created.model || '';
+                createConversation();
                 renderAll();
             }
         } else {
@@ -1243,7 +1495,6 @@
                 return;
             }
             state.currentId = imported[0].id;
-            els.modelInput.value = imported[0].model || '';
             renderAll();
             showToast('已导入 ' + imported.length + ' 个会话');
         };
@@ -1256,7 +1507,7 @@
     function openSettings(focusPrompt) {
         const conv = currentConversation();
         els.settingsApiKey.value = state.settings.apiKey || '';
-        els.settingsModel.value = conv ? (conv.model || '') : els.modelInput.value;
+        els.settingsModel.value = conv ? (conv.model || '') : '';
         els.settingsPrompt.value = conv ? (conv.systemPrompt || '') : (state.settings.systemPrompt || '');
         els.settingsBase.textContent = location.origin;
         els.settingsModal.classList.add('active');
@@ -1281,8 +1532,8 @@
             const model = els.settingsModel.value.trim();
             if (model) {
                 conv.model = model;
+                conv.provider = providerForModel(model, conv.provider);
                 conv.asyncType = resolveCluster(model);
-                els.modelInput.value = model;
             }
             conv.updatedAt = now();
             schedulePersist(conv, true);
@@ -1301,8 +1552,7 @@
                 showToast('请先停止当前回复', false);
                 return;
             }
-            const conv = createConversation();
-            els.modelInput.value = conv.model || '';
+            createConversation();
             state.autoScroll = true;
             renderAll();
             closeSidebar();
@@ -1335,13 +1585,97 @@
             }
         });
 
-        els.modelInput.addEventListener('change', onModelChange);
-        els.modelInput.addEventListener('keydown', function (event) {
+        els.modelPickerBtn.addEventListener('click', openModelConfig);
+        els.thinkingToggle.addEventListener('change', function () {
+            const conv = currentConversation();
+            if (!conv) return;
+            conv.thinking = els.thinkingToggle.checked;
+            conv.updatedAt = now();
+            schedulePersist(conv, true);
+            updateThinkingToggle();
+        });
+
+        // 运营商下拉
+        els.providerField.addEventListener('focus', function () {
+            renderProviderList('');
+            setComboOpen(els.providerCombo, els.providerList, true);
+        });
+        els.providerField.addEventListener('input', function () {
+            renderProviderList(els.providerField.value);
+            renderModelFieldList('');
+            setComboOpen(els.providerCombo, els.providerList, true);
+        });
+        els.providerField.addEventListener('keydown', function (event) {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                onModelChange();
-                els.messageInput.focus();
+                const first = els.providerCombo.classList.contains('open')
+                    ? els.providerList.querySelector('.combo-item') : null;
+                if (first) first.click();
+                else setComboOpen(els.providerCombo, els.providerList, false);
+            } else if (event.key === 'Escape'
+                && els.providerCombo.classList.contains('open')) {
+                event.stopPropagation();
+                setComboOpen(els.providerCombo, els.providerList, false);
             }
+        });
+        els.providerField.addEventListener('blur', function () {
+            setTimeout(function () { setComboOpen(els.providerCombo, els.providerList, false); }, 120);
+        });
+        els.providerList.addEventListener('click', function (event) {
+            const item = event.target.closest('.combo-item');
+            if (!item) return;
+            const provider = item.dataset.provider || '';
+            els.providerField.value = provider;
+            const currentModel = els.modelField.value.trim();
+            const available = modelsFor(provider, '');
+            if (currentModel && !available.some(function (model) { return model.id === currentModel; })) {
+                els.modelField.value = '';
+            }
+            renderModelFieldList('');
+            setComboOpen(els.providerCombo, els.providerList, false);
+            els.modelField.focus();
+        });
+
+        // 模型下拉
+        els.modelField.addEventListener('focus', function () {
+            renderModelFieldList('');
+            setComboOpen(els.modelCombo, els.modelFieldList, true);
+        });
+        els.modelField.addEventListener('input', function () {
+            renderModelFieldList(els.modelField.value);
+            setComboOpen(els.modelCombo, els.modelFieldList, true);
+        });
+        els.modelField.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const first = els.modelCombo.classList.contains('open')
+                    ? els.modelFieldList.querySelector('.combo-item') : null;
+                if (first) first.click();
+                else setComboOpen(els.modelCombo, els.modelFieldList, false);
+            } else if (event.key === 'Escape'
+                && els.modelCombo.classList.contains('open')) {
+                event.stopPropagation();
+                setComboOpen(els.modelCombo, els.modelFieldList, false);
+            }
+        });
+        els.modelField.addEventListener('blur', function () {
+            setTimeout(function () { setComboOpen(els.modelCombo, els.modelFieldList, false); }, 120);
+        });
+        els.modelFieldList.addEventListener('click', function (event) {
+            const item = event.target.closest('.combo-item');
+            if (!item) return;
+            els.modelField.value = item.dataset.model || '';
+            setComboOpen(els.modelCombo, els.modelFieldList, false);
+        });
+
+        els.paramTemperature.addEventListener('input', function () { onSamplingInput('temperature'); });
+        els.paramTopP.addEventListener('input', function () { onSamplingInput('top_p'); });
+
+        els.modelConfigSave.addEventListener('click', applyModelConfig);
+        els.modelConfigCancel.addEventListener('click', closeModelConfig);
+        els.modelConfigClose.addEventListener('click', closeModelConfig);
+        els.modelConfigModal.addEventListener('click', function (event) {
+            if (event.target === els.modelConfigModal) closeModelConfig();
         });
 
         els.convTitle.addEventListener('click', renameCurrent);
@@ -1384,6 +1718,7 @@
         document.addEventListener('keydown', function (event) {
             if (event.key === 'Escape') {
                 closeSettings();
+                closeModelConfig();
                 closeSidebar();
             }
         });
@@ -1411,15 +1746,7 @@
         } else {
             state.currentId = state.conversations[0].id;
         }
-        const conv = currentConversation();
-        els.modelInput.value = conv ? (conv.model || '') : '';
         await loadModels();
-        if (conv && !conv.model && state.models[0]) {
-            conv.model = state.models[0].id;
-            conv.asyncType = state.models[0].x_async_type || '';
-            els.modelInput.value = conv.model;
-            schedulePersist(conv, true);
-        }
         renderAll();
         autoResize();
         setTimeout(function () { els.messageInput.focus(); }, 80);

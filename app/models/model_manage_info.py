@@ -1,5 +1,5 @@
 """模型管理信息 ORM 模型"""
-from sqlalchemy import Column, DateTime, Float, Integer, Numeric, String, Text, TIMESTAMP, func
+from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, Numeric, String, Text, TIMESTAMP, func
 from app.config.database import Base
 
 
@@ -35,6 +35,9 @@ class ModelManageInfo(Base):
     price_source = Column(String(16), nullable=True, comment="价格来源：manual/provider")
     price_updated_at = Column(DateTime, nullable=True, comment="价格更新时间")
     extra_config = Column(Text, comment="存储语音模型的音色、语速、音调等JSON配置")
+    # 排序批次号：普通新增生成新批次，复制模型沿用源模型批次，
+    # 列表按 batch_no DESC, created_at ASC 排序，使副本始终紧跟源模型。
+    batch_no = Column(BigInteger, nullable=True, index=True, comment="排序批次号：同批次模型相邻展示")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), comment="创建时间")
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
                         onupdate=func.current_timestamp(), comment="更新时间")

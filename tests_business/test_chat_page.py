@@ -35,6 +35,16 @@ class ChatPageBusinessTest(BusinessGatewayTestCase):
                     async_type="async2",
                 ),
                 ModelManageInfo(
+                    ai_model_id="biz-m4",
+                    ai_model_name="model-a",
+                    com_name="provider-c",
+                    com_url="https://c.example/v1",
+                    api_key="upstream-c",
+                    ai_model_type="0",
+                    is_using="1",
+                    async_type="async3",
+                ),
+                ModelManageInfo(
                     ai_model_id="biz-m3",
                     ai_model_name="model-off",
                     com_name="provider-b",
@@ -68,6 +78,9 @@ class ChatPageBusinessTest(BusinessGatewayTestCase):
         resp = await self.client.get("/v1/models")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual({item["id"] for item in resp.json()["data"]}, {"model-a", "model-b"})
+        by_id = {item["id"]: item for item in resp.json()["data"]}
+        self.assertEqual(by_id["model-a"]["x_clusters"], ["async1", "async3"])
+        self.assertEqual(by_id["model-a"]["x_providers"], ["provider-a", "provider-c"])
 
         allowed = await self.client.get(
             "/v1/models", headers={"Authorization": f"Bearer {raw}"},

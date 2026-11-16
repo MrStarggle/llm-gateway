@@ -400,13 +400,27 @@ svg {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 5px 7px 5px 11px;
+    max-width: clamp(180px, 22vw, 290px);
+    padding: 6px 9px 6px 11px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: rgba(20, 24, 35, .72);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
 }
 
-.model-picker label {
+.model-picker:hover {
+    border-color: var(--border-strong);
+    background: rgba(26, 32, 48, .92);
+}
+
+.model-picker:focus-visible {
+    outline: 2px solid var(--accent-line);
+    outline-offset: 2px;
+}
+
+.model-picker-label {
     color: var(--text-3);
     font-size: 10.5px;
     font-weight: 700;
@@ -414,17 +428,23 @@ svg {
     text-transform: uppercase;
 }
 
-.model-picker input {
-    width: clamp(150px, 18vw, 250px);
-    padding: 3px 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
+.model-picker-value {
+    min-width: 0;
+    overflow: hidden;
     color: var(--text);
     font-size: 12.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.model-picker input::placeholder {
+.model-picker-value.is-empty {
+    color: var(--text-3);
+}
+
+.model-picker-chevron {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
     color: var(--text-3);
 }
 
@@ -957,10 +977,87 @@ svg {
     padding-top: 4px;
 }
 
+.composer-meta {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+}
+
 .composer-hint {
+    overflow: hidden;
     color: var(--text-3);
     font-size: 10.5px;
     letter-spacing: .01em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 思考模式胶囊开关 */
+.think-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.think-toggle input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.think-track {
+    position: relative;
+    display: inline-block;
+    width: 30px;
+    height: 17px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .07);
+    transition: background .18s ease, border-color .18s ease;
+}
+
+.think-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #7b8499;
+    transition: transform .18s ease, background .18s ease;
+}
+
+.think-toggle input:checked + .think-track {
+    border-color: rgba(139, 92, 246, .55);
+    background: rgba(139, 92, 246, .30);
+}
+
+.think-toggle input:checked + .think-track .think-thumb {
+    background: #c8b8ff;
+    transform: translateX(13px);
+}
+
+.think-toggle input:focus-visible + .think-track {
+    outline: 2px solid var(--accent-line);
+    outline-offset: 2px;
+}
+
+.think-label {
+    color: var(--text-3);
+    font-size: 10.5px;
+    transition: color .18s ease;
+}
+
+.think-toggle input:checked ~ .think-label {
+    color: var(--text-2);
 }
 
 .send-btn {
@@ -1126,6 +1223,143 @@ svg {
     font-size: 12px;
 }
 
+/* ============ 模型配置弹窗 ============ */
+
+.model-config-card {
+    width: 560px;
+}
+
+.field-label-opt {
+    margin-left: 8px;
+    color: var(--text-3);
+    font-size: 10.5px;
+    font-weight: 400;
+}
+
+.combo {
+    position: relative;
+}
+
+.combo-input {
+    padding-right: 34px;
+}
+
+.combo-arrow {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    color: var(--text-3);
+    font-size: 11px;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition: transform .15s ease;
+}
+
+.combo.open .combo-arrow {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.combo-list {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
+    z-index: 20;
+    display: none;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 11px;
+    background: #171c28;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, .46);
+    scrollbar-width: thin;
+}
+
+.combo.open .combo-list {
+    display: block;
+    animation: comboIn .14s ease;
+}
+
+@keyframes comboIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+}
+
+.combo-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    color: var(--text-2);
+    font-size: 12.5px;
+    cursor: pointer;
+}
+
+.combo-item:hover,
+.combo-item.active {
+    background: var(--accent-soft);
+    color: var(--text);
+}
+
+.combo-item .ci-meta {
+    overflow: hidden;
+    color: var(--text-3);
+    font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.combo-empty {
+    padding: 12px;
+    color: var(--text-3);
+    font-size: 11.5px;
+    text-align: center;
+}
+
+.param-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(8, 10, 16, .32);
+}
+
+.param-item {
+    display: block;
+}
+
+.param-name {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 5px;
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.param-range {
+    color: var(--text-3);
+    font-family: var(--font-sans);
+    font-size: 10px;
+}
+
+.param-item .input {
+    padding: 7px 9px;
+    font-size: 12px;
+}
+
+.param-item .input:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
 .modal-actions {
     display: flex;
     justify-content: flex-end;
@@ -1254,12 +1488,12 @@ svg {
         padding-left: 9px;
     }
 
-    .model-picker label {
+    .model-picker-label {
         display: none;
     }
 
-    .model-picker input {
-        width: 120px;
+    .model-picker-value {
+        max-width: 120px;
     }
 
     .topbar-tools .icon-btn {
@@ -1296,7 +1530,13 @@ svg {
 
 @media (max-width: 560px) {
     .topbar-tools .model-picker {
-        display: none;
+        max-width: 104px;
+        padding: 5px 7px 5px 9px;
+    }
+
+    .model-picker-value {
+        max-width: 72px;
+        font-size: 12px;
     }
 
     .topbar-title {
@@ -1305,6 +1545,10 @@ svg {
 
     .empty-state h1 {
         font-size: 27px;
+    }
+
+    .param-grid {
+        grid-template-columns: 1fr;
     }
 }
 

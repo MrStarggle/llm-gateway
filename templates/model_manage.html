@@ -2578,6 +2578,7 @@ function renderModels(list) {
             <td><span class="ellipsis muted" title="${esc(m.remarks)}">${esc(m.remarks || '-')}</span></td>
             <td>
                 <div class="actions" style="justify-content:flex-end">
+                    <button class="btn btn-link btn-sm" onclick="copyModel(this, '${esc(m.aiModelId)}')">复制</button>
                     <button class="btn btn-link btn-sm" onclick="openModelModal('${esc(m.aiModelId)}')">编辑</button>
                     <button class="btn btn-link danger btn-sm" onclick="deleteModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>
                 </div>
@@ -2642,6 +2643,52 @@ async function toggleUsing(id, labelEl, event) {
         toast(newVal === '1' ? '已启用' : '已停用');
     } else {
         toast(result.message || '更新失败', false);
+    }
+}
+
+// 复制模型：以源模型配置创建一条新记录；沿用源批次，刷新后紧跟源模型
+async function copyModel(btn, id) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+        const source = await fetchModelDetail(id);
+        if (!source) return;
+
+        const body = {
+            ai_model_name: source.aiModelName,
+            ai_model_type: source.aiModelType || '0',
+            is_using: source.isUsing,
+            is_think: source.isThink || '0',
+            is_stream: source.isStream || '1',
+            async_type: source.asyncType || 'async1',
+            temperature: source.temperature ?? null,
+            top_p: source.topP ?? null,
+            top_k: source.topK ?? null,
+            max_tokens: source.maxTokens ?? null,
+            extra_config: source.extraConfig || null,
+            remarks: source.remarks || null,
+            batch_no: source.batchNo ?? null
+        };
+        // 关联提供商的模型由服务端回填地址与密钥；历史模型沿用自身配置
+        if (source.providerId) {
+            body.provider_id = source.providerId;
+        } else {
+            body.com_name = source.comName;
+            body.com_url = source.comUrl;
+            body.api_key = source.apiKey;
+        }
+
+        const result = await api('POST', '/', body);
+        if (result.code !== 200 && result.code !== 201) {
+            toast(result.message || '复制失败', false);
+            return;
+        }
+        toast('已复制模型');
+        loadModels();
+        _providers = null;
+        preloadProviders();
+    } finally {
+        btn.disabled = false;
     }
 }
 

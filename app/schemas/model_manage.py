@@ -16,6 +16,7 @@ class ModelManageCreate(BaseModel):
     com_url: str | None = Field(default=None, min_length=1, max_length=512, description="运营商URL")
     api_key: str | None = Field(default=None, min_length=1, max_length=512, description="运营商API-Key")
     ai_model_type: str = Field(default="0", pattern=r"^[01]$", description="0文本模型，1语音模型")
+    batch_no: int | None = Field(default=None, description="排序批次号；复制模型时传入源模型批次")
     is_using: str = Field(..., pattern=r"^[01]$", description="是否使用中：1是0否")
     is_think: str = Field(default="0", pattern=r"^[012]$", description="0跟随请求，1强制开启，2强制关闭")
     is_stream: str = Field(default="1", pattern=r"^[01]$", description="流式：1是0否")

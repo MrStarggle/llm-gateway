@@ -36,10 +36,12 @@ CREATE TABLE IF NOT EXISTS model_manage_info
     price_updated_at    DATETIME      NULL COMMENT '价格更新时间',
     extra_config  TEXT         NULL COMMENT '额外 JSON 配置',
     remarks       TEXT         NULL COMMENT '备注',
+    batch_no      BIGINT       NULL COMMENT '排序批次号：同批次模型相邻展示',
     created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
     updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间',
     KEY idx_model_provider_id (provider_id),
-    KEY idx_model_async_type (async_type)
+    KEY idx_model_async_type (async_type),
+    KEY idx_model_batch_no (batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='大模型配置表';
 
 CREATE TABLE IF NOT EXISTS user_token_info

@@ -157,6 +157,10 @@ async def run_migrations():
         "ALTER TABLE model_manage_info ADD COLUMN price_currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '价格币种'",
         "ALTER TABLE model_manage_info ADD COLUMN price_source VARCHAR(16) NULL COMMENT '价格来源：manual/provider'",
         "ALTER TABLE model_manage_info ADD COLUMN price_updated_at DATETIME NULL COMMENT '价格更新时间'",
+        # 模型列表排序批次：普通新增生成新批次，复制模型沿用源模型批次
+        "ALTER TABLE model_manage_info ADD COLUMN batch_no BIGINT NULL COMMENT '排序批次号：同批次模型相邻展示'",
+        "ALTER TABLE model_manage_info ADD INDEX idx_model_batch_no (batch_no)",
+        "UPDATE model_manage_info SET batch_no = UNIX_TIMESTAMP(created_at) WHERE batch_no IS NULL",
         # 用量归属与成本快照
         "ALTER TABLE user_token_info ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized' COMMENT '功能码（用量分组统计用）'",
         "ALTER TABLE user_token_info ADD INDEX idx_user_token_feature_code (feature_code)",
