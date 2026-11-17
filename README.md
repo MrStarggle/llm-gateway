@@ -4,7 +4,8 @@
 
 A lightweight gateway that puts a single OpenAI-compatible API in front of many LLM providers.
 Configure providers, models, clusters, and request parameters from one admin console, and track
-usage for every call.
+usage for every call. It absorbs the call-layer plumbing — protocol differences, retries,
+failover, quotas, usage, and logs — so your services only need an OpenAI-compatible client.
 
 > [!WARNING]
 > The default admin account is `admin / admin` and `JWT_SECRET_KEY` is a placeholder.
@@ -12,11 +13,26 @@ usage for every call.
 > internet, change `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `JWT_SECRET_KEY`.
 > Never commit `.env`, `data/`, database files, or logs to the repository.
 
+## Who it's for
+
+Built for internal backends and small teams that call LLMs from their own services — business
+APIs, background jobs, report generation, or multiple product lines that need separate quotas
+and failure isolation.
+
+- **Good fit**: one or a few operators, internal traffic, OpenAI-compatible clients, SQLite on a
+  single host, or MySQL when you need multiple instances
+- **Not a fit**: public multi-tenant API resale, per-user recharge/billing, RBAC across
+  departments, or agent chat-log analytics. Use new-api, one-api, or LiteLLM for those.
+
+The gateway owns call-layer concerns: provider protocols, retries, circuit breaking, quotas,
+usage accounting, and logging. Your business code still owns prompt design, result validation,
+and business-level fallbacks.
+
 ## Features
 
 - **One API for many providers**: OpenAI-compatible `POST /chat/completions`, with streaming (SSE) and non-streaming responses
 - **Centralized provider config**: base URLs and API keys live at the provider level; models reference a provider
-- **Model clusters and round-robin**: models are grouped into nine clusters (`async1..async9`) with automatic round-robin inside each cluster
+- **Model clusters and round-robin**: models are grouped into nine clusters (`async1..async9`) with automatic round-robin inside each cluster. Use separate clusters to isolate production calls, background batches, and reports so batch jobs cannot starve core traffic
 - **Projects and API keys**: issue `sk-gw-...` tokens per project, with revocation, rotation, and model allow-lists
 - **Project quotas**: daily/monthly caps on calls, tokens, and cost
 - **Channel health**: success rate, latency, circuit breaking/cool-down, and automatic failover within a cluster
@@ -50,8 +66,16 @@ per-project quotas, without a multi-tenant user system.
 | Quotas | per project: daily/monthly calls, tokens, cost | per key/user/team budgets | user and token quotas with recharge | user and token quotas with redemption |
 | Storage | SQLite (default) / MySQL | PostgreSQL (+ Redis) | SQLite / MySQL / PostgreSQL (+ Redis) | SQLite / MySQL / PostgreSQL (+ Redis) |
 
-**Where this project is weaker:** provider coverage, multi-tenant users/OAuth, guardrails, and
-Redis-backed multi-instance routing. If you need those, use LiteLLM or new-api.
+### Limitations
+
+- No virtual-model layer: a model maps to real provider rows, with no prompt/model composition
+- Single admin from environment variables; no RBAC or per-user accounts
+- Routing is round-robin, cost-first, or latency-first per cluster; no weights, priority tiers, or quality-based model selection
+- No built-in alerting or Prometheus export; use the health dashboard and your log pipeline
+- No guardrails or content-policy layer
+- Provider coverage is a preset list rather than 100+ integrations
+- SQLite is single-process; use MySQL for multiple workers or instances
+- Multi-instance state lives in MySQL; there is no Redis-backed routing or rate-limit cache
 
 *Comparison reflects public documentation as of November 2026. Corrections are welcome via an issue.*
 
