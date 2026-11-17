@@ -81,15 +81,53 @@ SQLite 优先、带集群路由、渠道健康和项目配额的网关，但不�
 
 ![内置聊天页](docs/screenshots/chat.png)
 
+## 环境要求
+
+一键脚本和手动启动都需要 Python **3.10+**；使用 Docker 可以不装本地 Python。
+
+**Windows**
+
+从 <https://www.python.org/downloads/windows/> 下载安装包，安装时勾选 **Add python.exe to PATH**。
+安装完成后打开新终端检查：
+
+```bash
+python --version        # 或：py -3 --version
+```
+
+**macOS**
+
+从 <https://www.python.org/downloads/macos/> 安装，或使用 Homebrew：
+
+```bash
+brew install python
+python3 --version
+```
+
+**Linux（Debian / Ubuntu）**
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+python3 --version
+```
+
+如果发行版自带的 Python 低于 3.10，请从 <https://www.python.org/downloads/> 安装新版本，
+或使用 `pyenv`。
+
+使用 Docker 时改为安装 Docker Desktop（Windows/macOS）或带 Compose v2 的 Docker Engine。
+
 ## 最简单：一键启动
 
-需要 Python 3.10+（安装时勾选 “Add Python to PATH”）。
+需要 Python 3.10+，详见[环境要求](#环境要求)。
 
 - **Windows**：双击 `start.bat`
-- **macOS / Linux**：`./start.sh`
+- **macOS / Linux**：`bash start.sh`（ZIP 下载丢失执行权限时也能运行）
 
-脚本会自动创建虚拟环境、安装依赖、生成 `.env`、启动服务并打开管理台。
-默认地址 <http://127.0.0.1:9010/>，默认账号 `admin / admin`。
+脚本会自动创建虚拟环境、安装依赖、生成 `.env`、启动服务并打印管理台地址
+（Windows 会同时打开浏览器）。默认地址 <http://127.0.0.1:9010/>，默认账号 `admin / admin`。
+
+> 一键脚本默认只监听 `127.0.0.1`。需要局域网或服务器访问时，运行
+> `HOST=0.0.0.0 bash start.sh`，并在防火墙或云安全组放行 9010 端口。
 
 > 默认账号只适合本机使用；如果要对局域网或公网开放，先修改 `.env` 中的
 > `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET_KEY`。
@@ -106,10 +144,13 @@ docker compose up -d --build
 
 默认使用 SQLite，数据库文件持久化在 `gateway_data` 卷中，无需额外数据库服务。
 
-## 手动启动（本地开发）
+## 手动启动（本地开发或 Linux 服务器）
 
 ```bash
-python -m venv .venv
+git clone https://github.com/MrStarggle/llm-gateway.git
+cd llm-gateway
+
+python3 -m venv .venv            # Windows: py -3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -117,7 +158,8 @@ cp .env.example .env
 uvicorn main:app --host 0.0.0.0 --port 9010
 ```
 
-应用启动时会自动建表，数据库默认写入 `data/gateway.db`。
+应用启动时会自动建表，数据库默认写入 `data/gateway.db`。部署到服务器时，
+`--host 0.0.0.0` 才能从外部访问；请在防火墙或云安全组放行 9010 端口。
 
 > SQLite 适合单机单进程部署。不要同时启动多个 uvicorn worker 或多个实例共享同一个
 > SQLite 文件；需要多实例/高并发写入时，请切换到 MySQL。
@@ -142,7 +184,8 @@ python -m unittest discover -s tests -v
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接（`DB_BACKEND=mysql` 时使用） | localhost / 3306 / root / 空 / `llm_gateway` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号（明文保存在 env，单管理员） | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | 代码默认 `dev-only-change-me`；示例文件里是占位符 |
-| `PORT` | 服务端口 | `9010` |
+| `HOST` | `start.sh` / `start.bat` 的监听地址 | `127.0.0.1` |
+| `PORT` | `start.sh` / `start.bat` 与 `python main.py` 使用的端口；Docker 使用 compose 端口映射 | `9010` |
 | `GATEWAY_DEBUG` | `1` 时错误响应包含调试信息 | `0` |
 | `GATEWAY_TOKEN_REQUIRED` | `1` 时所有调用必须带 `sk-gw-` 项目 Token | `0` |
 | `USAGE_RETENTION_DAYS` | 原始调用明细保留天数；`0` 不清理 | `90` |

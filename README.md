@@ -87,16 +87,55 @@ per-project quotas, without a multi-tenant user system.
 
 ![Built-in chat](docs/screenshots/chat.png)
 
+## Prerequisites
+
+Python **3.10+** is required for the one-click scripts and the manual setup. The Docker path
+does not need a local Python installation.
+
+**Windows**
+
+Download from <https://www.python.org/downloads/windows/> and enable **Add python.exe to PATH**
+in the installer. Then open a new terminal and check:
+
+```bash
+python --version        # or: py -3 --version
+```
+
+**macOS**
+
+Install from <https://www.python.org/downloads/macos/>, or with Homebrew:
+
+```bash
+brew install python
+python3 --version
+```
+
+**Linux (Debian / Ubuntu)**
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+python3 --version
+```
+
+If your distribution ships a Python older than 3.10, install a newer release from
+<https://www.python.org/downloads/> or with `pyenv`.
+
+For Docker, install Docker Desktop (Windows/macOS) or Docker Engine with Compose v2 instead.
+
 ## Quickest start: one-click launch
 
-Requires Python 3.10+ (select "Add Python to PATH" during installation).
+Requires Python 3.10+ — see [Prerequisites](#prerequisites).
 
 - **Windows**: double-click `start.bat`
-- **macOS / Linux**: `./start.sh`
+- **macOS / Linux**: `bash start.sh` (works even if a ZIP download lost the executable bit)
 
 The script creates a virtual environment, installs dependencies, generates `.env`, starts the
-service, and opens the admin console. Default URL: <http://127.0.0.1:9010/>. Default account:
-`admin / admin`.
+service, and prints the admin URL (on Windows it also opens the browser). Default URL:
+<http://127.0.0.1:9010/>. Default account: `admin / admin`.
+
+> The one-click script listens on `127.0.0.1` by default. For LAN or server access, run
+> `HOST=0.0.0.0 bash start.sh` and open port 9010 in your firewall or cloud security group.
 
 > The default account is intended for local use only. Before serving a LAN or the internet,
 > change `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET_KEY` in `.env`.
@@ -114,10 +153,13 @@ Open <http://localhost:9010/> and sign in with the admin account from `.env`.
 SQLite is used by default. The database file is persisted in the `gateway_data` volume, so no
 external database is required.
 
-## Run manually (local development)
+## Run manually (local development or a Linux server)
 
 ```bash
-python -m venv .venv
+git clone https://github.com/MrStarggle/llm-gateway.git
+cd llm-gateway
+
+python3 -m venv .venv            # Windows: py -3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -126,6 +168,8 @@ uvicorn main:app --host 0.0.0.0 --port 9010
 ```
 
 Tables are created automatically on startup. The database defaults to `data/gateway.db`.
+On a server, `--host 0.0.0.0` is required for outside access; open port 9010 in your firewall
+or cloud security group.
 
 > SQLite fits single-process deployments. Do not run multiple uvicorn workers or share one
 > SQLite file across multiple instances. Switch to MySQL if you need multiple instances or
@@ -152,7 +196,8 @@ You can also install `requirements-dev.txt` and run them with pytest.
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL connection settings (used when `DB_BACKEND=mysql`) | localhost / 3306 / root / empty / `llm_gateway` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin console credentials (stored in plaintext in the env, single-admin) | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT signing key; must be changed in production | code default `dev-only-change-me`; the example file uses a placeholder |
-| `PORT` | Service port | `9010` |
+| `HOST` | Bind address used by `start.sh` / `start.bat` | `127.0.0.1` |
+| `PORT` | Port used by `start.sh` / `start.bat` and `python main.py`; Docker uses the compose port mapping | `9010` |
 | `GATEWAY_DEBUG` | Set to `1` to include debug details in error responses | `0` |
 | `GATEWAY_TOKEN_REQUIRED` | Set to `1` to require an `sk-gw-` project token on every call | `0` |
 | `USAGE_RETENTION_DAYS` | Days to keep raw call records; `0` disables cleanup | `90` |
