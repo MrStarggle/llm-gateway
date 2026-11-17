@@ -32,13 +32,11 @@
 
 ## 界面截图
 
-| 管理台 | 模型与渠道健康 |
+| 用量面板 | 模型与渠道健康 |
 |---|---|
-| ![管理台用量](docs/screenshots/admin-usage.svg) | ![模型与渠道健康](docs/screenshots/admin-models.svg) |
+| ![用量面板](docs/screenshots/admin-usage.png) | ![模型与渠道健康](docs/screenshots/admin-models.png) |
 
-![内置聊天页](docs/screenshots/chat.svg)
-
-> 当前为占位图，发布前替换为真实截图。
+![内置聊天页](docs/screenshots/chat.png)
 
 ## 最简单：一键启动
 

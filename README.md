@@ -34,13 +34,11 @@ usage for every call.
 
 ## Screenshots
 
-| Admin console | Models and channel health |
+| Usage dashboard | Models and channel health |
 |---|---|
-| ![Admin console usage](docs/screenshots/admin-usage.svg) | ![Models and channel health](docs/screenshots/admin-models.svg) |
+| ![Usage dashboard](docs/screenshots/admin-usage.png) | ![Models and channel health](docs/screenshots/admin-models.png) |
 
-![Built-in chat](docs/screenshots/chat.svg)
-
-> These are placeholder mockups. Replace them with real screenshots before announcing the project.
+![Built-in chat](docs/screenshots/chat.png)
 
 ## Quickest start: one-click launch
 
