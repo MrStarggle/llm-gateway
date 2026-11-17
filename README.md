@@ -1,4 +1,4 @@
-# LLM Gateway
+# StarggleAPI
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -51,11 +51,11 @@ and business-level fallbacks.
 
 ## How it compares
 
-LLM Gateway is not a drop-in replacement for LiteLLM or new-api. It targets small self-hosted
+StarggleAPI is not a drop-in replacement for LiteLLM or new-api. It targets small self-hosted
 deployments that want a compact, SQLite-first gateway with cluster routing, channel health, and
 per-project quotas, without a multi-tenant user system.
 
-| | LLM Gateway | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
+| | StarggleAPI | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
 |---|---|---|---|---|
 | License | Apache-2.0 | MIT | AGPL-3.0 | MIT |
 | Stack | Python / FastAPI | Python | Go / React | Go |
@@ -156,8 +156,8 @@ external database is required.
 ## Run manually (local development or a Linux server)
 
 ```bash
-git clone https://github.com/MrStarggle/llm-gateway.git
-cd llm-gateway
+git clone https://github.com/StarggleLove/starggle-api.git
+cd starggle-api
 
 python3 -m venv .venv            # Windows: py -3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate

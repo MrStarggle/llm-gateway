@@ -1,5 +1,5 @@
 /*!
- * LLM Gateway UI i18n
+ * StarggleAPI UI i18n
  *
  * The HTML/JS sources are written in Chinese. When the UI language is English
  * (the default), text nodes and translatable attributes are replaced at runtime
@@ -26,9 +26,9 @@
     '渠道健康': 'Channel health',
     '对话': 'Chat',
     '接入说明': 'Integration guide',
-    '大模型管理平台': 'LLM Gateway',
-    '大模型管理平台 - LLM Gateway': 'LLM Gateway',
-    '大模型管理平台 - 管理后台': 'LLM Gateway - Admin',
+    '大模型管理平台': 'LLM API Gateway',
+    '大模型管理平台 - StarggleAPI': 'StarggleAPI',
+    '大模型管理平台 - 管理后台': 'StarggleAPI - Admin',
     '刷新': 'Refresh',
     '退出': 'Sign out',
     '取消': 'Cancel',
@@ -326,7 +326,7 @@
     '便于排查': 'for troubleshooting',
 
     // ==================== 聊天页 ====================
-    '对话 · LLM Gateway': 'Chat · LLM Gateway',
+    '对话 · StarggleAPI': 'Chat · StarggleAPI',
     '本地对话 · 网关直连': 'Local chat · direct to gateway',
     '新对话': 'New chat',
     '设置': 'Settings',

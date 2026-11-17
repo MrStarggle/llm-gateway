@@ -89,7 +89,7 @@ class ChatPageTest(GatewayTestCase):
             self.assertEqual(resp.headers.get("cache-control"), "no-store")
             self.assertIn("/static/chat/chat.js", resp.text)
             self.assertIn('id="messages"', resp.text)
-            self.assertIn("LLM Gateway Chat", resp.text)
+            self.assertIn("StarggleAPI Chat", resp.text)
         finally:
             await client.aclose()
 

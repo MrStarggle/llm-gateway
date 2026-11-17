@@ -1,4 +1,4 @@
-# LLM Gateway
+# StarggleAPI
 
 [English](README.md) | **简体中文**
 
@@ -46,10 +46,10 @@
 
 ## 横向对比
 
-LLM Gateway 不是 LiteLLM / new-api 的替代品。它面向小型自托管场景：想要一个紧凑、
+StarggleAPI 不是 LiteLLM / new-api 的替代品。它面向小型自托管场景：想要一个紧凑、
 SQLite 优先、带集群路由、渠道健康和项目配额的网关，但不需要多租户用户体系。
 
-| | LLM Gateway | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
+| | StarggleAPI | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
 |---|---|---|---|---|
 | 许可证 | Apache-2.0 | MIT | AGPL-3.0 | MIT |
 | 技术栈 | Python / FastAPI | Python | Go / React | Go |
@@ -147,8 +147,8 @@ docker compose up -d --build
 ## 手动启动（本地开发或 Linux 服务器）
 
 ```bash
-git clone https://github.com/MrStarggle/llm-gateway.git
-cd llm-gateway
+git clone https://github.com/StarggleLove/starggle-api.git
+cd starggle-api
 
 python3 -m venv .venv            # Windows: py -3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate

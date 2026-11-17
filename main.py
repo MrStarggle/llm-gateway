@@ -1,4 +1,4 @@
-"""LLM Gateway - 多厂商大模型统一接入网关"""
+"""StarggleAPI - 多厂商大模型统一接入网关"""
 import asyncio
 import logging
 import os
@@ -88,7 +88,7 @@ async def lifespan(_app: FastAPI):
     logger.info("数据库连接池已释放")
 
 
-app = FastAPI(title="LLM Gateway", lifespan=lifespan)
+app = FastAPI(title="StarggleAPI", lifespan=lifespan)
 app.state.DEBUG = DEBUG
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")

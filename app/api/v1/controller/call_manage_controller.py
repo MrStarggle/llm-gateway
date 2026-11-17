@@ -1421,13 +1421,13 @@ async def list_models_openai(
                 "id": name,
                 "object": "model",
                 "created": created,
-                "owned_by": model.com_name or "llm-gateway",
+                "owned_by": model.com_name or "starggle-api",
                 "x_clusters": set(),
                 "x_providers": set(),
                 "x_pricing": None,
             }
         entry["x_clusters"].add(model.async_type)
-        entry["x_providers"].add(model.com_name or "llm-gateway")
+        entry["x_providers"].add(model.com_name or "starggle-api")
         if entry["x_pricing"] is None and (
             model.input_price_per_1m is not None or model.output_price_per_1m is not None
         ):

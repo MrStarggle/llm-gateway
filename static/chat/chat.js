@@ -535,7 +535,7 @@
 
         const mark = document.createElement('div');
         mark.className = 'empty-mark';
-        mark.textContent = 'L';
+        mark.textContent = 'S';
 
         const title = document.createElement('h1');
         title.textContent = '开始一段对话';
@@ -1453,7 +1453,7 @@
             conversation: conv,
         };
         downloadFile(
-            'llm-gateway-chat-' + new Date().toISOString().slice(0, 10) + '.json',
+            'starggle-api-chat-' + new Date().toISOString().slice(0, 10) + '.json',
             JSON.stringify(payload, null, 2)
         );
         showToast('已导出当前会话');
