@@ -146,6 +146,8 @@
     .field > label { font-size: 12px; font-weight: 600; color: var(--text-2); }
     .field > label .req { color: var(--danger); }
     .field .hint { font-size: 11.5px; color: var(--text-3); }
+    .field-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .field-name { font-size: 12px; font-weight: 600; color: var(--text-2); }
     .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .field-row .full { grid-column: 1 / -1; }
     .radio-group { display: flex; gap: 16px; padding: 5px 0; }
@@ -215,6 +217,8 @@
     .toggle-track::before { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
     .toggle input:checked + .toggle-track { background: var(--success); }
     .toggle input:checked + .toggle-track::before { transform: translateX(16px); }
+    .toggle input:disabled + .toggle-track { opacity: .45; }
+    .toggle.is-disabled { cursor: not-allowed; }
     .toggle.loading { opacity: .5; pointer-events: none; }
 
     /* ========== 用量 ========== */
@@ -1328,8 +1332,14 @@ print(resp.choices[0].message.content)</pre>
                     <span class="hint">模型自身扩展字段，如语音音色；与下方 OpenRouter 路由参数分开填写。</span>
                 </div>
                 <div class="field full">
-                    <label>OpenRouter 路由参数 (JSON)</label>
-                    <textarea class="textarea mono" id="mProviderConfig" placeholder='{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}'></textarea>
+                    <div class="field-head">
+                        <span class="field-name">OpenRouter 路由参数</span>
+                        <label class="toggle" id="providerConfigToggle" title="开启后按默认值注入 provider 字段">
+                            <input type="checkbox" id="mProviderConfigEnabled" onchange="onProviderConfigToggle()">
+                            <span class="toggle-track"></span>
+                        </label>
+                    </div>
+                    <textarea class="textarea mono" id="mProviderConfig" placeholder='{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}' hidden></textarea>
                     <span class="hint" id="providerParamHint">仅 OpenRouter 提供商会启用该参数。</span>
                 </div>
                 <div class="field full">
@@ -2734,7 +2744,9 @@ async function openModelModal(modelId) {
         syncSamplingConflict();
         // 第一个框只展示除 provider 外的模型扩展配置，provider 由下方单独编辑
         document.getElementById('mExtraConfig').value = extraConfigWithoutProvider(model.extraConfig);
-        document.getElementById('mProviderConfig').value = providerConfigFromExtra(model.extraConfig);
+        const providerConfig = providerConfigFromExtra(model.extraConfig);
+        document.getElementById('mProviderConfig').value = providerConfig;
+        document.getElementById('mProviderConfigEnabled').checked = !!providerConfig.trim();
         document.getElementById('mRemarks').value = model.remarks || '';
         document.getElementById('modelLoadHint').textContent =
             selected ? '已关联提供商，点击模型名称可加载模型列表' : '历史模型未关联提供商，保存时保留原有地址与密钥';
@@ -2780,6 +2792,7 @@ function clearModelForm() {
     syncSamplingConflict();
     document.getElementById('mExtraConfig').value = '';
     document.getElementById('mProviderConfig').value = '';
+    document.getElementById('mProviderConfigEnabled').checked = false;
     document.getElementById('mRemarks').value = '';
     document.getElementById('modelLoadHint').textContent = '选择提供商后自动拉取可用模型';
     updateProviderParamState();
@@ -2844,18 +2857,37 @@ function isOpenRouterProvider() {
     return name.includes('openrouter') || url.includes('openrouter');
 }
 
+function onProviderConfigToggle() {
+    const enabled = document.getElementById('mProviderConfigEnabled');
+    const input = document.getElementById('mProviderConfig');
+    // 开关打开时填入现默认值；已有自定义 JSON 则保留
+    if (enabled.checked && !input.value.trim()) input.value = OPENROUTER_DEFAULT_PROVIDER;
+    updateProviderParamState();
+}
+
 function updateProviderParamState() {
+    const toggle = document.getElementById('providerConfigToggle');
+    const enabled = document.getElementById('mProviderConfigEnabled');
     const input = document.getElementById('mProviderConfig');
     const hint = document.getElementById('providerParamHint');
-    if (isOpenRouterProvider()) {
-        input.disabled = false;
-        hint.textContent = '当前为 OpenRouter，提供商参数会写入请求体 provider 字段。';
-        if (!input.value.trim()) input.value = OPENROUTER_DEFAULT_PROVIDER;
-    } else {
+    if (!isOpenRouterProvider()) {
+        enabled.checked = false;
+        enabled.disabled = true;
+        toggle.classList.add('is-disabled');
         input.disabled = true;
+        input.hidden = true;
         input.value = '';
         hint.textContent = '仅 OpenRouter 提供商会启用该参数。';
+        return;
     }
+    enabled.disabled = false;
+    toggle.classList.remove('is-disabled');
+    if (enabled.checked && !input.value.trim()) input.value = OPENROUTER_DEFAULT_PROVIDER;
+    input.disabled = !enabled.checked;
+    input.hidden = !enabled.checked;
+    hint.textContent = enabled.checked
+        ? '已开启：默认使用上述路由参数，可按需修改。'
+        : '关闭时不注入 provider 字段；开启后使用默认路由参数。';
 }
 
 async function onProviderChange() {
@@ -2954,7 +2986,8 @@ function selectModel(idx) {
 function buildExtraConfig() {
     const extraRaw = document.getElementById('mExtraConfig').value.trim();
     const providerInput = document.getElementById('mProviderConfig');
-    const providerRaw = providerInput.disabled ? '' : providerInput.value.trim();
+    const providerEnabled = document.getElementById('mProviderConfigEnabled').checked && !providerInput.disabled;
+    const providerRaw = providerEnabled ? providerInput.value.trim() : '';
 
     let extraObj = null;
     if (extraRaw) {
