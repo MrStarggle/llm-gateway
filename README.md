@@ -350,6 +350,22 @@ Chatbox-style client that calls the gateway's `/v1/chat/completions` directly:
 - The local open-source mode allows an empty API key; when `GATEWAY_TOKEN_REQUIRED=1` or project quotas are used, enter an `sk-gw-...` token under Settings
 - For a full-featured client, Chatbox / Open WebUI / Cherry Studio can use `base_url=http://host:9010/v1` with a project token
 
+## Payload logging
+
+Full LLM payloads are written to the server log by default. Toggle it under
+**Channel Health → LLM payload logs**.
+
+When on, the gateway logs:
+
+- the request body sent upstream
+- the full JSON response for non-streaming calls
+- the reconstructed `content`, `reasoning_content`, and `usage` after a streaming call
+
+When off, only summary lines remain: status, latency, byte counts, and token usage.
+
+The setting is stored in the database, not `.env`, and applies immediately to the current process;
+other workers refresh within 15 seconds. Logs may contain user prompts — protect them accordingly.
+
 ## Projects and quotas
 
 1. Open the admin console → "Projects & Keys" → create a project

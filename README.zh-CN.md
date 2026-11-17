@@ -334,6 +334,21 @@ Chatbox 风格客户端，直接调用网关的 `/v1/chat/completions`：
 - 本地开源模式可留空 API Key；启用 `GATEWAY_TOKEN_REQUIRED=1` 或使用项目配额时，在「设置」中填写 `sk-gw-...`
 - 需要完整客户端时，Chatbox / Open WebUI / Cherry Studio 等可直接使用 `base_url=http://host:9010/v1` 和项目 Token
 
+## 报文日志
+
+完整 LLM 报文默认写入服务端日志。开关位置：**渠道健康 → LLM 报文日志**。
+
+开启时记录：
+
+- 发给上游的请求体
+- 非流式调用的完整 JSON 响应
+- 流式调用结束后重组出的 `content`、`reasoning_content` 和 `usage`
+
+关闭后只保留摘要：状态码、耗时、字节数和 Token 用量。
+
+开关保存在数据库中（不在 `.env`），当前进程立即生效，其他 worker 最多 15 秒内同步。
+日志可能包含用户提示词，请妥善保护日志文件。
+
 ## 项目与配额
 
 1. 打开管理台 →「项目与密钥」→ 新增项目
