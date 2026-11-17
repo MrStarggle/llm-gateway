@@ -642,11 +642,12 @@
     }
 
     function metaText(msg) {
-        const parts = [msg.role === 'user' ? '你' : '助手', formatTime(msg.createdAt)];
+        const tr = window.I18N ? window.I18N.t : function (s) { return s; };
+        const parts = [tr(msg.role === 'user' ? '你' : '助手'), formatTime(msg.createdAt)];
         const usage = formatUsage(msg.usage);
-        if (usage) parts.push(usage);
-        if (msg.status === 'stopped') parts.push('已停止');
-        if (msg.status === 'error') parts.push('失败');
+        if (usage) parts.push(tr(usage));
+        if (msg.status === 'stopped') parts.push(tr('已停止'));
+        if (msg.status === 'error') parts.push(tr('失败'));
         return parts.join(' · ');
     }
 
