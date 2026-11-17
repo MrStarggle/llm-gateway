@@ -75,9 +75,9 @@ SQLite 优先、带集群路由、渠道健康和项目配额的网关，但不�
 
 ## 界面截图
 
-| 用量面板 | 模型与渠道健康 |
-|---|---|
-| ![用量面板](docs/screenshots/admin-usage.png) | ![模型与渠道健康](docs/screenshots/admin-models.png) |
+![用量面板](docs/screenshots/admin-usage.png)
+
+![模型与渠道健康](docs/screenshots/admin-models.png)
 
 ![内置聊天页](docs/screenshots/chat.png)
 

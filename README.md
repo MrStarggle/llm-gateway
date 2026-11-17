@@ -81,9 +81,9 @@ per-project quotas, without a multi-tenant user system.
 
 ## Screenshots
 
-| Usage dashboard | Models and channel health |
-|---|---|
-| ![Usage dashboard](docs/screenshots/admin-usage.png) | ![Models and channel health](docs/screenshots/admin-models.png) |
+![Usage dashboard](docs/screenshots/admin-usage.png)
+
+![Models and channel health](docs/screenshots/admin-models.png)
 
 ![Built-in chat](docs/screenshots/chat.png)
 
