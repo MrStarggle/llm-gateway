@@ -558,7 +558,7 @@
             button.className = 'prompt-card';
             button.textContent = pair[0];
             button.addEventListener('click', function () {
-                els.messageInput.value = pair[1];
+                els.messageInput.value = window.I18N ? window.I18N.t(pair[1]) : pair[1];
                 autoResize();
                 els.messageInput.focus();
                 els.messageInput.setSelectionRange(els.messageInput.value.length, els.messageInput.value.length);
@@ -601,6 +601,8 @@
 
         const content = document.createElement('div');
         content.className = 'msg-content';
+        // Message bodies are user/model content: never translate them.
+        content.setAttribute('data-no-i18n', '');
         if (msg.role === 'assistant') {
             content.innerHTML = assistantHtml(msg);
         } else {
@@ -653,7 +655,8 @@
         if (msg.reasoning) {
             parts.push(
                 '<details class="reasoning"' + (!msg.content ? ' open' : '') + '>' +
-                '<summary>思考过程</summary><pre>' + escapeHtml(msg.reasoning) + '</pre></details>'
+                '<summary>' + (window.I18N ? window.I18N.t('思考过程') : '思考过程') + '</summary><pre>' +
+            escapeHtml(msg.reasoning) + '</pre></details>'
             );
         }
         if (msg.content) {
@@ -1021,7 +1024,8 @@
                 if (index < lines.length) index += 1;
                 html.push(
                     '<div class="code-block"><div class="code-head"><span>' + escapeHtml(lang) +
-                    '</span><button type="button" class="code-copy">复制</button></div>' +
+                    '</span><button type="button" class="code-copy">' +
+            (window.I18N ? window.I18N.t('复制') : '复制') + '</button></div>' +
                     '<pre><code>' + escapeHtml(codeLines.join('\n')) + '</code></pre></div>'
                 );
                 continue;
@@ -1382,7 +1386,10 @@
     function renameCurrent() {
         const conv = currentConversation();
         if (!conv) return;
-        const value = window.prompt('重命名会话', conv.title || '新对话');
+        const value = window.prompt(
+            window.I18N ? window.I18N.t('重命名会话') : '重命名会话',
+            conv.title || (window.I18N ? window.I18N.t('新对话') : '新对话'),
+        );
         if (value === null) return;
         const title = value.trim();
         if (!title) return;
@@ -1400,7 +1407,10 @@
         }
         const conv = state.conversations.find(function (item) { return item.id === id; });
         if (!conv) return;
-        if (!window.confirm('删除会话「' + (conv.title || '新对话') + '」？此操作只影响本机。')) return;
+        const confirmText = window.I18N
+            ? window.I18N.t('删除会话「') + (conv.title || window.I18N.t('新对话')) + window.I18N.t('」？此操作只影响本机。')
+            : '删除会话「' + (conv.title || '新对话') + '」？此操作只影响本机。';
+        if (!window.confirm(confirmText)) return;
 
         state.conversations = state.conversations.filter(function (item) { return item.id !== id; });
         if (state.storeMode === 'idb' && state.db) {

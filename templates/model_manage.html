@@ -1509,6 +1509,7 @@ print(resp.choices[0].message.content)</pre>
     </div>
 </div>
 
+<script src="/static/i18n.js"></script>
 <script>
 // ==================== 基础状态 ====================
 // ==================== 控制台配置（默认同源单环境） ====================
@@ -2579,10 +2580,16 @@ function priceTag(m) {
     return `<span class="tag tag-blue" title="输入 / 输出（USD / 1M tokens）">${f(inp)} / ${f(out)}</span>`;
 }
 
+// 状态标签的「开启/关闭/跟随」在不同上下文含义不同（如关闭弹窗），
+// 这里直接按当前语言输出，并跳过运行时翻译。
+function uiText(en, zh) {
+    return (window.I18N && window.I18N.lang === 'en') ? en : zh;
+}
+
 function thinkTag(v) {
-    if (v === '1') return '<span class="tag tag-orange">开启</span>';
-    if (v === '2') return '<span class="tag tag-gray">关闭</span>';
-    return '<span class="tag tag-gray">跟随</span>';
+    if (v === '1') return '<span class="tag tag-orange" data-no-i18n">' + uiText('On', '开启') + '</span>';
+    if (v === '2') return '<span class="tag tag-gray" data-no-i18n">' + uiText('Off', '关闭') + '</span>';
+    return '<span class="tag tag-gray" data-no-i18n">' + uiText('Follow', '跟随') + '</span>';
 }
 
 function parseExtraConfig(extraConfig) {
@@ -3561,7 +3568,7 @@ function renderHealth() {
                 <td><input class="input route-input" id="routeRatio-${r.asyncType}" type="number" min="0" max="1" step="0.05" value="${r.outputRatio}"></td>
                 <td><select class="select" id="routeEnabled-${r.asyncType}">
                     <option value="1" ${Number(r.enabled) === 1 ? 'selected' : ''}>启用</option>
-                    <option value="0" ${Number(r.enabled) === 0 ? 'selected' : ''}>关闭</option>
+                    <option value="0" ${Number(r.enabled) === 0 ? 'selected' : ''}>禁用</option>
                 </select></td>
                 <td style="text-align:right"><button class="btn btn-primary btn-sm" onclick="saveRouting('${r.asyncType}')">保存</button></td>
             </tr>`).join('')
