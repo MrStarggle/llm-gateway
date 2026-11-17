@@ -1181,7 +1181,7 @@ print(resp.choices[0].message.content)</pre>
                     <span class="arrow" id="pNameArrow">▼</span>
                     <div class="combo-list" id="providerComboList"></div>
                 </div>
-                <span class="hint">实时匹配 companlist.txt；选中后 API 地址为空时会自动填入。</span>
+                <span class="hint">实时匹配 providers.txt；选中后 API 地址为空时会自动填入。</span>
             </div>
             <div class="field" style="margin-bottom:16px">
                 <label><span class="req">*</span> API 地址</label>
@@ -1554,7 +1554,7 @@ let _currentSection = 'usage';
 let _usageDays = 7;
 let _usageGroupBy = ['model'];   // 用量明细分组维度：feature_code / model / user_id
 let _providers = null;          // 提供商缓存
-let _companyCache = null;       // companlist.txt 厂商列表缓存
+let _companyCache = null;       // providers.txt 厂商列表缓存
 let _companyTimer = null;       // 厂商远程模糊搜索防抖
 let _editingModel = null;       // 当前编辑的模型（历史数据回退判定 OpenRouter 用）
 let _modelCache = [];           // 当前提供商可用模型
@@ -2285,7 +2285,7 @@ function closeProviderModal() {
     document.getElementById('providerOverlay').classList.remove('active');
 }
 
-// ==================== 提供商名称：companlist.txt 实时下拉 ====================
+// ==================== 提供商名称：providers.txt 实时下拉 ====================
 async function loadAllCompanies() {
     try {
         const result = await api('GET', '/company-search?name=');

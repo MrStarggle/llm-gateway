@@ -22,16 +22,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_admin_token)])
 
-# companlist.txt 文件路径
-_companlist_path = Path(__file__).parent.parent.parent.parent.parent / "companlist.txt"
+# providers.txt 文件路径
+_providers_path = Path(__file__).parent.parent.parent.parent.parent / "providers.txt"
 
 
 def _read_companies() -> list[dict]:
     """读取厂家列表文件"""
     companies = []
-    if not _companlist_path.exists():
+    if not _providers_path.exists():
         return companies
-    with open(_companlist_path, "r", encoding="utf-8") as f:
+    with open(_providers_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):

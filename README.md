@@ -3,6 +3,11 @@
 一个轻量的多厂商大模型统一接入网关：用 OpenAI 兼容协议对接多家模型服务，
 在管理台统一维护提供商、模型、集群与请求参数，并记录调用用量。
 
+> [!WARNING]
+> 默认管理员账号是 `admin / admin`，`JWT_SECRET_KEY` 是占位符，**仅用于本机体验**。
+> 部署到局域网或公网前，必须先修改 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 和 `JWT_SECRET_KEY`。
+> 请勿把 `.env`、`data/`、数据库文件或日志提交到仓库。
+
 ## 特性
 
 - **多厂商统一接入**：OpenAI 兼容 `POST /chat/completions`，支持流式（SSE）与非流式
@@ -287,6 +292,7 @@ templates/model_manage.html   管理台
 templates/chat.html           内置聊天页
 static/chat/                  聊天页 CSS / JS
 tests/                        标准库 unittest 测试
+providers.txt                 提供商下拉清单（域名, 名称, 备注）
 main.py                       FastAPI 入口
 ```
 
