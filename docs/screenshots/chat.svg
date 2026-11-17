@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-label="Built-in chat UI screenshot placeholder">
+  <rect width="1200" height="675" fill="#0b1220"/>
+  <rect width="260" height="675" fill="#0e1729"/>
+  <rect x="18" y="22" width="34" height="34" rx="9" fill="#4d6bfe"/>
+  <text x="62" y="38" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">Starggle Chat</text>
+  <text x="62" y="54" fill="#64748b" font-family="Segoe UI, Arial, sans-serif" font-size="10.5">Local chat · direct to gateway</text>
+  <rect x="16" y="84" width="228" height="38" rx="9" fill="#16233d"/>
+  <text x="34" y="108" fill="#cbd5e1" font-family="Segoe UI, Arial, sans-serif" font-size="13">+  New chat</text>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="16" y="140" width="228" height="52" rx="9" fill="#16233d"/>
+    <text x="30" y="162" fill="#e2e8f0" font-size="12.5">Explain this error</text>
+    <text x="30" y="180" fill="#64748b" font-size="10.5">gpt-4o · 6 messages · 2m ago</text>
+    <text x="30" y="222" fill="#94a3b8" font-size="12.5">Customer email draft</text>
+    <text x="30" y="240" fill="#64748b" font-size="10.5">claude-sonnet-4.6 · 4 messages</text>
+    <text x="30" y="282" fill="#94a3b8" font-size="12.5">SQL optimization</text>
+    <text x="30" y="300" fill="#64748b" font-size="10.5">deepseek-v4 · 9 messages</text>
+  </g>
+  <text x="300" y="52" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="600">Explain this error</text>
+  <text x="300" y="70" fill="#64748b" font-family="Segoe UI, Arial, sans-serif" font-size="11">Saved locally</text>
+  <rect x="920" y="34" width="150" height="34" rx="9" fill="#16233d"/>
+  <text x="938" y="56" fill="#cbd5e1" font-family="Segoe UI, Arial, sans-serif" font-size="12">Model · gpt-4o</text>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="300" y="104" width="720" height="72" rx="14" fill="#16233d"/>
+    <text x="322" y="132" fill="#e2e8f0" font-size="13">Why does my gateway return a 401 when the upstream is healthy?</text>
+    <text x="322" y="156" fill="#64748b" font-size="11">You</text>
+    <rect x="300" y="192" width="820" height="180" rx="14" fill="#101b30"/>
+    <text x="322" y="220" fill="#e2e8f0" font-size="13">The 401 is coming from the upstream provider, not the gateway.</text>
+    <text x="322" y="244" fill="#cbd5e1" font-size="13">Check the provider API key first, then inspect the channel health table.</text>
+    <rect x="322" y="266" width="560" height="66" rx="8" fill="#0a111f"/>
+    <text x="338" y="290" fill="#7aa2f7" font-family="Consolas, monospace" font-size="11.5">POST /v1/chat/completions  401</text>
+    <text x="338" y="312" fill="#94a3b8" font-family="Consolas, monospace" font-size="11.5">{"error": {"message": "User not found."}}</text>
+    <text x="322" y="356" fill="#64748b" font-size="11">Assistant · streamed in 1.8s</text>
+  </g>
+  <rect x="300" y="560" width="860" height="84" rx="14" fill="#16233d"/>
+  <text x="322" y="596" fill="#64748b" font-family="Segoe UI, Arial, sans-serif" font-size="12.5">Type a message. Enter to send, Shift+Enter for a new line</text>
+  <rect x="1080" y="582" width="60" height="40" rx="10" fill="#4d6bfe"/>
+  <path d="M1098 610l24-12-9 24-3-9z" fill="#fff"/>
+  <text x="1160" y="660" text-anchor="end" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="11">Placeholder · replace with a real screenshot</text>
+</svg>

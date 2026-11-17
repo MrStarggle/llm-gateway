@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-label="Admin console models and channel health screenshot placeholder">
+  <rect width="1200" height="675" fill="#0f172a"/>
+  <rect width="200" height="675" fill="#111c33"/>
+  <rect x="20" y="24" width="36" height="36" rx="9" fill="#4d6bfe"/>
+  <text x="68" y="44" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">LLM Gateway</text>
+  <text x="68" y="62" fill="#64748b" font-family="Segoe UI, Arial, sans-serif" font-size="11">Admin console</text>
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="13">
+    <rect x="12" y="100" width="14" height="10" rx="2" fill="#334155"/>
+    <text x="48" y="110" fill="#94a3b8">Usage</text>
+    <rect x="12" y="130" width="14" height="10" rx="2" fill="#334155"/>
+    <text x="48" y="140" fill="#94a3b8">Call records</text>
+    <rect x="12" y="160" width="14" height="10" rx="2" fill="#334155"/>
+    <text x="48" y="170" fill="#94a3b8">Providers</text>
+    <rect x="12" y="190" width="176" height="34" rx="8" fill="#1b2a4a"/>
+    <rect x="24" y="202" width="14" height="10" rx="2" fill="#4d6bfe"/>
+    <text x="48" y="212" fill="#e2e8f0">Models</text>
+    <rect x="12" y="232" width="14" height="10" rx="2" fill="#334155"/>
+    <text x="48" y="242" fill="#94a3b8">Projects &amp; keys</text>
+    <rect x="12" y="262" width="14" height="10" rx="2" fill="#334155"/>
+    <text x="48" y="272" fill="#94a3b8">Channel health</text>
+  </g>
+  <text x="232" y="56" fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Models</text>
+  <text x="232" y="78" fill="#64748b" font-family="Segoe UI, Arial, sans-serif" font-size="12">Manage how models are forwarded to providers</text>
+  <rect x="232" y="104" width="928" height="440" rx="12" fill="#1e293b"/>
+  <rect x="232" y="104" width="928" height="44" rx="12" fill="#172033"/>
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#64748b">
+    <text x="252" y="131">MODEL</text>
+    <text x="470" y="131">PROVIDER</text>
+    <text x="650" y="131">TYPE</text>
+    <text x="760" y="131">ACTIVE</text>
+    <text x="860" y="131">CLUSTER</text>
+    <text x="980" y="131">LAST ERROR</text>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="12">
+    <g>
+      <rect x="232" y="148" width="928" height="56" fill="#1b2740" opacity=".45"/>
+      <text x="252" y="181" fill="#e2e8f0" font-weight="600">deepseek-v4-flash</text>
+      <rect x="470" y="163" width="98" height="22" rx="6" fill="#1e3a5f"/>
+      <text x="482" y="178" fill="#7aa2f7">OpenRouter</text>
+      <rect x="650" y="163" width="58" height="22" rx="6" fill="#2a2145"/>
+      <text x="662" y="178" fill="#b79cff">Text</text>
+      <circle cx="770" cy="174" r="10" fill="#12a150"/>
+      <rect x="800" y="170" width="34" height="18" rx="9" fill="#12a150"/>
+      <circle cx="825" cy="179" r="7" fill="#fff"/>
+      <rect x="860" y="163" width="52" height="22" rx="6" fill="#20324f"/>
+      <text x="872" y="178" fill="#7aa2f7">async1</text>
+      <text x="980" y="178" fill="#64748b">—</text>
+    </g>
+    <g>
+      <text x="252" y="237" fill="#e2e8f0" font-weight="600">claude-sonnet-4.6</text>
+      <rect x="470" y="219" width="88" height="22" rx="6" fill="#1e3a5f"/>
+      <text x="482" y="234" fill="#7aa2f7">Anthropic</text>
+      <rect x="650" y="219" width="58" height="22" rx="6" fill="#2a2145"/>
+      <text x="662" y="234" fill="#b79cff">Text</text>
+      <circle cx="770" cy="230" r="10" fill="#12a150"/>
+      <rect x="800" y="226" width="34" height="18" rx="9" fill="#12a150"/>
+      <circle cx="825" cy="235" r="7" fill="#fff"/>
+      <rect x="860" y="219" width="52" height="22" rx="6" fill="#20324f"/>
+      <text x="872" y="234" fill="#7aa2f7">async2</text>
+      <text x="980" y="234" fill="#64748b">—</text>
+    </g>
+    <g>
+      <rect x="232" y="252" width="928" height="56" fill="#1b2740" opacity=".45"/>
+      <text x="252" y="285" fill="#e2e8f0" font-weight="600">gemini-2.5-pro</text>
+      <rect x="470" y="267" width="72" height="22" rx="6" fill="#1e3a5f"/>
+      <text x="482" y="282" fill="#7aa2f7">Google</text>
+      <rect x="650" y="267" width="58" height="22" rx="6" fill="#2a2145"/>
+      <text x="662" y="282" fill="#b79cff">Text</text>
+      <circle cx="770" cy="278" r="10" fill="#f59e0b"/>
+      <rect x="800" y="274" width="34" height="18" rx="9" fill="#f59e0b"/>
+      <circle cx="825" cy="283" r="7" fill="#fff"/>
+      <rect x="860" y="267" width="52" height="22" rx="6" fill="#20324f"/>
+      <text x="872" y="282" fill="#7aa2f7">async3</text>
+      <text x="980" y="282" fill="#f59e0b">HTTP 429</text>
+    </g>
+  </g>
+  <rect x="232" y="560" width="928" height="78" rx="12" fill="#1e293b"/>
+  <text x="252" y="588" fill="#94a3b8" font-family="Segoe UI, Arial, sans-serif" font-size="12">Channel health · circuit breaker, latency, and cost-first routing</text>
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#64748b">
+    <text x="252" y="618">Success rate 99.2%</text>
+    <text x="420" y="618">Average latency 820 ms</text>
+    <text x="620" y="618">Retries 3 · Failures 1</text>
+  </g>
+  <text x="1160" y="660" text-anchor="end" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="11">Placeholder · replace with a real screenshot</text>
+</svg>

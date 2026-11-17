@@ -1,8 +1,10 @@
-# 贡献指南
+# Contributing
 
-## 开发环境
+**English** | [简体中文](CONTRIBUTING.zh-CN.md)
 
-需要 Python 3.10+。
+## Development environment
+
+Requires Python 3.10+.
 
 ```bash
 python -m venv .venv
@@ -17,44 +19,47 @@ cp .env.example .env
 uvicorn main:app --host 0.0.0.0 --port 9010 --reload
 ```
 
-默认使用 SQLite，无需额外数据库；需要 MySQL 时参考 README 的「切换到 MySQL」。
+SQLite is the default and needs no extra database. See "Switching to MySQL" in the README if you
+need MySQL.
 
-## 测试
+## Tests
 
-测试只依赖 Python 标准库，使用独立的临时 SQLite 文件，不会修改 `data/gateway.db`：
+The tests depend only on the Python standard library and use a separate temporary SQLite file, so
+they never modify `data/gateway.db`:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-提交 PR 前请确保全部测试通过。新增功能请附带覆盖核心行为的测试。
+Make sure the full suite passes before opening a pull request. New features should include tests
+covering the core behavior.
 
-## 代码风格
+## Code style
 
-- 遵循 PEP 8，函数保持职责单一，避免深层嵌套
-- 异步路由中不要调用阻塞 IO 或同步数据库会话
-- 管理接口统一通过 `Depends(verify_admin_token)` 鉴权
-- 输入在系统边界校验，错误显式处理，不要静默吞掉
-- 日志中不要输出请求体、API Key、项目 Token 或用户提示词（`GATEWAY_DEBUG=1` 除外）
+- Follow PEP 8; keep functions focused and avoid deep nesting
+- Do not perform blocking I/O or use synchronous database sessions in async endpoints
+- Guard admin endpoints with `Depends(verify_admin_token)`
+- Validate input at system boundaries and handle errors explicitly; never swallow them silently
+- Do not log request bodies, API keys, project tokens, or user prompts (except with `GATEWAY_DEBUG=1`)
 
-## 提交信息
+## Commit messages
 
-使用 Conventional Commits：
+Use Conventional Commits:
 
 ```text
-feat: 新增功能
-fix: 修复问题
-docs: 文档
-test: 测试
-refactor: 重构
-perf: 性能
-chore: 构建或杂项
+feat: add a feature
+fix: fix a bug
+docs: documentation
+test: tests
+refactor: refactor
+perf: performance
+chore: build or maintenance
 ```
 
-## 提交 Pull Request
+## Pull requests
 
-1. Fork 仓库，从 `main` 创建功能分支
-2. 保持改动聚焦，一个 PR 只做一件事
-3. 说明改动动机、行为变化和测试方式
-4. 确认没有提交 `.env`、数据库文件、日志或任何密钥
-5. 涉及安全相关改动时，请在描述中单独说明
+1. Fork the repository and branch from `main`
+2. Keep the change focused: one pull request, one concern
+3. Explain the motivation, behavior changes, and how it was tested
+4. Make sure no `.env`, database files, logs, or secrets are committed
+5. Call out security-relevant changes explicitly in the description

@@ -1,34 +1,38 @@
-# 安全策略
+# Security Policy
 
-## 报告漏洞
+**English** | [简体中文](SECURITY.zh-CN.md)
 
-请**不要**通过公开 Issue 报告安全漏洞。请使用 GitHub 仓库的私密报告功能：
+## Reporting a vulnerability
+
+Please do **not** report security vulnerabilities through public issues. Use GitHub's private
+vulnerability reporting:
 
 <https://github.com/MrStarggle/StarggleAPI/security/advisories/new>
 
-报告中请尽量包含：
+Please include as much as possible:
 
-- 受影响的版本或提交
-- 复现步骤与最小复现请求
-- 影响范围（是否能读取他人数据、绕过配额、获取上游 Key 等）
-- 可能的修复建议（可选）
+- Affected version or commit
+- Reproduction steps and a minimal request
+- Impact (e.g. reading other users' data, bypassing quotas, obtaining upstream keys)
+- Suggested fix (optional)
 
-我们会在确认问题后尽快回复，并在修复发布后致谢（如你愿意）。
+We will respond as soon as we can after confirming the issue, and will credit you in the release
+notes if you wish.
 
-## 支持范围
+## Supported versions
 
-| 版本 | 状态 |
+| Version | Status |
 |---|---|
-| `main` 分支最新提交 | 支持 |
-| 更早的提交或其它分支 | 不保证，建议先升级到最新 |
+| Latest commit on `main` | Supported |
+| Older commits or other branches | Not guaranteed; upgrade to the latest first |
 
-## 部署方责任
+## Deployer responsibilities
 
-本项目是自托管网关，部署者需要自行保证运行环境安全：
+This project is a self-hosted gateway. Operators are responsible for securing their deployment:
 
-- 修改默认管理员账号 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 与 `JWT_SECRET_KEY`
-- 通过 HTTPS 反向代理对外提供服务，并在代理层限制管理台访问
-- 不要把 `.env`、`data/`、数据库文件、日志或任何上游 API Key 提交到仓库
-- `GATEWAY_DEBUG=1` 会记录请求体与模型响应，生产环境应保持为 `0`
-- 项目 Token 只保存 SHA-256 哈希，完整密钥仅在创建/轮换时显示一次，请妥善保存
-- 对公网开放的登录接口建议在反向代理层增加限流
+- Change the default `ADMIN_USERNAME` / `ADMIN_PASSWORD` and `JWT_SECRET_KEY`
+- Serve over HTTPS behind a reverse proxy, and restrict admin console access at the proxy
+- Never commit `.env`, `data/`, database files, logs, or any upstream API key
+- `GATEWAY_DEBUG=1` logs request bodies and model responses; keep it `0` in production
+- Project tokens are stored as SHA-256 hashes; the full secret is shown only once at creation/rotation — store it securely
+- Rate-limit the login endpoint at the reverse proxy if it is exposed to the internet
