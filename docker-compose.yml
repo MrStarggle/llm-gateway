@@ -1,0 +1,15 @@
+services:
+  gateway:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DB_BACKEND: ${DB_BACKEND:-sqlite}
+    ports:
+      - "9010:9010"
+    volumes:
+      - gateway_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  gateway_data:

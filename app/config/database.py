@@ -1,52 +1,97 @@
 import os
 from pathlib import Path
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from urllib.parse import quote_plus, urlsplit, urlunsplit
+
+from dotenv import load_dotenv
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
-import sys
 
 # ==================== 路径配置 ====================
 BASE_DIR = Path(__file__).parent.parent.parent  # 项目根目录
+load_dotenv(BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
-SQL_SCHEMA_FILE = BASE_DIR / "app" / "db" / "starggle_main.sql"
+SQL_SCHEMA_FILE = BASE_DIR / "app" / "db" / "schema.sql"
 
-# ==================== MySQL 连接配置 ====================
+# ==================== 数据库选择 ====================
+# DB_BACKEND=sqlite（默认）：零配置，数据落在 data/gateway.db
+# DB_BACKEND=mysql：使用下方 MYSQL_* 配置
+# DATABASE_URL：显式指定时优先，支持任意 SQLAlchemy 异步驱动
+DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").strip().lower()
+
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "Yang@123")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "starggle_main")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "llm_gateway")
 
-# URL 编码密码中的特殊字符（如 @）
-from urllib.parse import quote_plus
-_encoded_password = quote_plus(MYSQL_PASSWORD)
 
-DATABASE_URL = (
-    f"mysql+aiomysql://{MYSQL_USER}:{_encoded_password}"
-    f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-    f"?charset=utf8mb4"
-)
+def _build_database_url() -> str:
+    explicit = os.getenv("DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+    if DB_BACKEND in ("mysql", "mariadb"):
+        return (
+            f"mysql+aiomysql://{MYSQL_USER}:{quote_plus(MYSQL_PASSWORD)}"
+            f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?charset=utf8mb4"
+        )
+    sqlite_path = Path(os.getenv("SQLITE_PATH", str(DATA_DIR / "gateway.db")))
+    return f"sqlite+aiosqlite:///{sqlite_path.as_posix()}"
 
-print(f" 数据库 URL: mysql+aiomysql://{MYSQL_USER}:***@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}")
 
-# ==================== 数据库引擎配置 ====================
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,                     # SQL 日志由应用层 logging 控制
-    pool_size=10,                   # 连接池大小
-    max_overflow=20,                # 最大溢出连接数
-    pool_pre_ping=False,            # aiomysql 不兼容 pool_pre_ping，使用 pool_recycle 兜底
-    pool_recycle=3600,              # 1 小时后回收连接
-)
+DATABASE_URL = _build_database_url()
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
-# 创建异步会话工厂
+
+def _safe_database_url(url: str) -> str:
+    """打印用：隐藏 URL 中的密码."""
+    try:
+        parts = urlsplit(url)
+        if parts.password:
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            netloc = f"{parts.username}:***@{host}"
+            return urlunsplit(parts._replace(netloc=netloc))
+    except ValueError:
+        pass
+    return url
+
+
+print(f" 数据库 URL: {_safe_database_url(DATABASE_URL)}")
+
+# SQLite 默认单机使用；多 worker / 多实例请改用 MySQL
+if IS_SQLITE:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _engine_options = {"echo": False, "connect_args": {"timeout": 30}}
+else:
+    _engine_options = {
+        "echo": False,
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_pre_ping": False,      # aiomysql 不兼容 pool_pre_ping，使用 pool_recycle 兜底
+        "pool_recycle": 3600,
+    }
+
+engine = create_async_engine(DATABASE_URL, **_engine_options)
+
+if IS_SQLITE:
+    # PRAGMA 是连接级设置，必须每条新连接都应用一次
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):  # noqa: ARG001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
+
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
-    expire_on_commit=False
+    expire_on_commit=False,
 )
 
-# 声明基类（用于 ORM 模型）
 Base = declarative_base()
 
 
@@ -61,7 +106,6 @@ def _split_sql_statements(sql_script: str) -> list[str]:
     """将 SQL 脚本按分号拆分为独立语句，过滤空行和注释"""
     statements = []
     for statement in sql_script.split(";"):
-        # 去掉前导的注释行和空行（否则 -- 注释头 + CREATE TABLE 的整块会被误过滤）
         lines = statement.strip().split("\n")
         content_start = 0
         for line in lines:
@@ -76,55 +120,128 @@ def _split_sql_statements(sql_script: str) -> list[str]:
     return statements
 
 
-async def init_database():
-    """应用启动时初始化数据库：建表 + 执行 SQL 脚本 + 迁移"""
-    try:
-        # 1. ORM 模型建表
-        from app.models.model_manage_info import ModelManageInfo  # noqa: F401
-        from app.models.user_token_info import UserTokenInfo  # noqa: F401
-        from app.models.user_info import UserInfo  # noqa: F401
-        from app.models.order_info import OrderInfo  # noqa: F401
-        from app.models.async_manage_info import AsyncManageInfo  # noqa: F401
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        print(" ORM 表结构检查完成")
+async def _configure_sqlite() -> None:
+    """WAL + NORMAL：提升并发读性能，降低写事务 fsync 开销."""
+    async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        await conn.execute(text("PRAGMA busy_timeout=5000"))
 
-        # 2. 读取并执行 SQL 建表脚本
-        if not SQL_SCHEMA_FILE.exists():
-            print(f" SQL 文件不存在，跳过: {SQL_SCHEMA_FILE}")
+
+_SQLITE_COLUMN_MIGRATIONS = [
+    ("user_token_info", "feature_code", "VARCHAR(64) NOT NULL DEFAULT 'uncategorized'",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_feature_code ON user_token_info (feature_code)"),
+    ("user_token_info", "estimated_cost", "NUMERIC(18,8) NULL", None),
+    ("user_token_info", "cost_currency", "VARCHAR(8) NULL", None),
+    ("user_token_info", "cost_source", "VARCHAR(16) NULL", None),
+    ("model_manage_info", "input_price_per_1m", "NUMERIC(18,6) NULL", None),
+    ("model_manage_info", "output_price_per_1m", "NUMERIC(18,6) NULL", None),
+    ("model_manage_info", "price_currency", "VARCHAR(8) NOT NULL DEFAULT 'USD'", None),
+    ("model_manage_info", "price_source", "VARCHAR(16) NULL", None),
+    ("model_manage_info", "price_updated_at", "DATETIME NULL", None),
+    # 模型列表排序批次：复制模型沿用源模型批次
+    ("model_manage_info", "batch_no", "INTEGER NULL",
+     "CREATE INDEX IF NOT EXISTS ix_model_manage_info_batch_no ON model_manage_info (batch_no)"),
+    # 项目归属与请求追踪
+    ("user_token_info", "project_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_project_id ON user_token_info (project_id)"),
+    ("user_token_info", "token_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_token_id ON user_token_info (token_id)"),
+    ("user_token_info", "channel_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_channel_id ON user_token_info (channel_id)"),
+    ("user_token_info", "request_id", "VARCHAR(64) NULL",
+     "CREATE INDEX IF NOT EXISTS ix_user_token_info_request_id ON user_token_info (request_id)"),
+    ("user_token_info", "retry_count", "INTEGER NOT NULL DEFAULT 0", None),
+]
+
+
+async def _ensure_sqlite_schema() -> None:
+    """SQLite 存量库补列（create_all 不会修改已存在的表）."""
+    async with engine.begin() as conn:
+        by_table: dict[str, set[str]] = {}
+        for table, column, ddl, index_sql in _SQLITE_COLUMN_MIGRATIONS:
+            if table not in by_table:
+                rows = await conn.execute(text(f"PRAGMA table_info({table})"))
+                by_table[table] = {row[1] for row in rows.fetchall()}
+            if column in by_table[table]:
+                continue
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            if index_sql:
+                await conn.execute(text(index_sql))
+            by_table[table].add(column)
+            print(f" SQLite 迁移执行成功: {table}.{column}")
+
+        # 存量模型补齐排序批次（按创建时间秒值初始化，保持原有「新→旧」视图）
+        try:
+            await conn.execute(text(
+                "UPDATE model_manage_info SET batch_no = CAST(strftime('%s', created_at) AS INTEGER) "
+                "WHERE batch_no IS NULL"
+            ))
+        except Exception as e:
+            print(f" SQLite 批次号回填跳过: {e}")
+
+
+async def _init_mysql_schema() -> None:
+    """MySQL：执行建表脚本（已有表跳过）."""
+    if not SQL_SCHEMA_FILE.exists():
+        print(f" SQL 文件不存在，跳过: {SQL_SCHEMA_FILE}")
+        return
+    with open(SQL_SCHEMA_FILE, "r", encoding="utf-8") as f:
+        sql_script = f.read()
+
+    async with engine.begin() as conn:
+        for stmt in _split_sql_statements(sql_script):
+            try:
+                await conn.execute(text(stmt))
+            except Exception as e:
+                print(f"  SQL 语句跳过（可能已存在）: {stmt[:60]}... ({e})")
+    print(" SQL 脚本执行完成")
+
+
+async def _list_tables() -> list[str]:
+    async with engine.connect() as conn:
+        if IS_SQLITE:
+            result = await conn.execute(text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ))
         else:
-            with open(SQL_SCHEMA_FILE, 'r', encoding='utf-8') as f:
-                sql_script = f.read()
-
-            statements = _split_sql_statements(sql_script)
-            async with engine.begin() as conn:
-                for stmt in statements:
-                    try:
-                        await conn.execute(text(stmt))
-                    except Exception as e:
-                        # 表/索引已存在等预期错误，跳过
-                        print(f"  SQL 语句跳过（可能已存在）: {stmt[:60]}... ({e})")
-            print(" SQL 脚本执行完成")
-
-        # 3. 数据库迁移
-        await run_migrations()
-
-        # 3.5 异步LLM总控种子数据（13 路固定配置，只补缺失行）
-        from app.services.async_manage_service import seed_async_manage_configs
-        await seed_async_manage_configs()
-
-        # 4. 验证表列表
-        async with engine.connect() as conn:
             result = await conn.execute(
                 text(
                     "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
                     "WHERE TABLE_SCHEMA = :db AND TABLE_TYPE = 'BASE TABLE'"
                 ),
-                {"db": MYSQL_DATABASE}
+                {"db": MYSQL_DATABASE},
             )
-            tables = [row[0] for row in result.fetchall()]
-            print(f" 数据库中的表 ({len(tables)} 个): {tables}")
+        return [row[0] for row in result.fetchall()]
 
+
+async def init_database():
+    """应用启动时初始化数据库：建表 +（MySQL）迁移"""
+    try:
+        # 1. ORM 模型建表（SQLite 与 MySQL 共用同一套模型）
+        from app.models.llm_provider_info import LlmProviderInfo  # noqa: F401
+        from app.models.model_manage_info import ModelManageInfo  # noqa: F401
+        from app.models.user_daily_quota import UserDailyQuota  # noqa: F401
+        from app.models.user_token_info import UserTokenInfo  # noqa: F401
+        from app.models.project_info import ProjectInfo  # noqa: F401
+        from app.models.project_token_info import ProjectTokenInfo  # noqa: F401
+        from app.models.project_usage_daily import ProjectUsageDaily  # noqa: F401
+        from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401
+        from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print(" ORM 表结构检查完成")
+
+        if IS_SQLITE:
+            await _configure_sqlite()
+            await _ensure_sqlite_schema()
+        else:
+            await _init_mysql_schema()
+            await run_migrations()
+
+        tables = await _list_tables()
+        print(f" 数据库中的表 ({len(tables)} 个): {tables}")
         return True
 
     except Exception as e:
@@ -135,44 +252,55 @@ async def init_database():
 
 
 async def run_migrations():
-    """执行数据库迁移，为现有表添加新字段"""
+    """MySQL 存量库迁移（SQLite 新库由 ORM 直接建表，无需迁移）."""
+    if IS_SQLITE:
+        print(" SQLite 模式：表结构由 ORM 创建，跳过 MySQL 迁移")
+        return
+
     migrations = [
-        # 积分制：新增积分余额字段（共享表，列由本系统负责迁移，重复执行自动跳过）
-        "ALTER TABLE user_info ADD COLUMN point_balance INT NOT NULL DEFAULT 0 COMMENT '积分余额（余额即会员等级）'",
-        # 会员系统：新增到期时间 / 订阅ID / 套餐ID 字段（与 StarggleCom 迁移保持一致，重复执行自动跳过）
-        "ALTER TABLE user_info ADD COLUMN membership_expire_at DATETIME NULL COMMENT '会员到期时间（免费档为空）'",
-        "ALTER TABLE user_info ADD COLUMN subscription_id VARCHAR(128) NULL COMMENT '支付渠道订阅ID（Creem 用）'",
-        "ALTER TABLE user_info ADD COLUMN plan_id VARCHAR(64) NULL COMMENT '支付渠道套餐ID（Creem 用）'",
-        # 会员等级默认值修正 + 历史数据归一（与 StarggleCom 一致）
-        "ALTER TABLE user_info MODIFY COLUMN membership_level VARCHAR(32) NULL DEFAULT 'free' COMMENT '会员等级: free/plus/pro'",
-        "UPDATE user_info SET membership_level = 'free' WHERE membership_level = '1'",
-        "UPDATE user_info SET membership_level = 'plus' WHERE membership_level = '2'",
-        # 异步LLM总控：is_think 改为三态（1强制开/0强制关/NULL跟随客户端不注入），存量 '0'/'1' 语义不变
-        "ALTER TABLE async_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '请求级思考模式：1强制开/0强制关/NULL跟随客户端（不注入）'",
+        # 大模型提供商：模型关联 llm_provider_info（地址/密钥统一配置，模型表保留冗余副本供调用链路直读）
+        "ALTER TABLE model_manage_info ADD COLUMN provider_id VARCHAR(64) NULL COMMENT '提供商ID（指向 llm_provider_info）'",
+        "ALTER TABLE model_manage_info ADD INDEX idx_model_provider_id (provider_id)",
+        # 集群类型：原 is_base 两池语义迁移为 async1/async2，迁移后删除旧字段
+        "ALTER TABLE model_manage_info ADD COLUMN async_type VARCHAR(8) NOT NULL DEFAULT 'async1' COMMENT '集群类型：async1..async9'",
+        "UPDATE model_manage_info SET async_type = 'async2' WHERE is_base = '1'",
+        "ALTER TABLE model_manage_info DROP COLUMN is_base",
+        "ALTER TABLE model_manage_info ADD INDEX idx_model_async_type (async_type)",
+        # 模型级请求参数（NULL=沿用客户端值）
+        "ALTER TABLE model_manage_info ADD COLUMN temperature FLOAT NULL COMMENT '覆盖请求体temperature；NULL=不覆盖（沿用客户端值）'",
+        "ALTER TABLE model_manage_info ADD COLUMN top_p FLOAT NULL COMMENT '覆盖请求体top_p；NULL=不覆盖（与temperature互斥）'",
+        "ALTER TABLE model_manage_info ADD COLUMN top_k INT NULL COMMENT '覆盖请求体top_k；NULL=不覆盖（部分厂商不支持）'",
+        "ALTER TABLE model_manage_info ADD COLUMN max_tokens INT NULL COMMENT '覆盖请求体max_tokens；NULL=不覆盖（沿用客户端值）'",
+        # 思考模式语义：0跟随请求/1强制开启/2强制关闭
+        "ALTER TABLE model_manage_info MODIFY COLUMN is_think VARCHAR(1) NULL DEFAULT '0' COMMENT '思考模式：0跟随请求，1强制开启，2强制关闭'",
+        # 用量分组统计：功能码（调用方通过 X-Feature-Code 声明）
+        "ALTER TABLE user_token_info ADD COLUMN feature_code VARCHAR(64) NOT NULL DEFAULT 'uncategorized' COMMENT '功能码（用量分组统计用）'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_feature_code (feature_code)",
+        # 成本估算：模型单价 + 每次调用成本快照
+        "ALTER TABLE model_manage_info ADD COLUMN input_price_per_1m DECIMAL(18,6) NULL COMMENT '输入单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN output_price_per_1m DECIMAL(18,6) NULL COMMENT '输出单价（每 1M token）'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '价格币种'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_source VARCHAR(16) NULL COMMENT '价格来源：manual/provider'",
+        "ALTER TABLE model_manage_info ADD COLUMN price_updated_at DATETIME NULL COMMENT '价格更新时间'",
+        # 模型列表排序批次：普通新增生成新批次，复制模型沿用源模型批次
+        "ALTER TABLE model_manage_info ADD COLUMN batch_no BIGINT NULL COMMENT '排序批次号：同批次模型相邻展示'",
+        "ALTER TABLE model_manage_info ADD INDEX idx_model_batch_no (batch_no)",
+        "UPDATE model_manage_info SET batch_no = UNIX_TIMESTAMP(created_at) WHERE batch_no IS NULL",
+        "ALTER TABLE user_token_info ADD COLUMN estimated_cost DECIMAL(18,8) NULL COMMENT '本次调用成本（估算或上游返回）'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_currency VARCHAR(8) NULL COMMENT '成本币种'",
+        "ALTER TABLE user_token_info ADD COLUMN cost_source VARCHAR(16) NULL COMMENT '成本来源：estimate/provider'",
+        # 项目归属与请求追踪
+        "ALTER TABLE user_token_info ADD COLUMN project_id VARCHAR(64) NULL COMMENT '项目ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_project_id (project_id)",
+        "ALTER TABLE user_token_info ADD COLUMN token_id VARCHAR(64) NULL COMMENT '项目Token ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_token_id (token_id)",
+        "ALTER TABLE user_token_info ADD COLUMN channel_id VARCHAR(64) NULL COMMENT '实际服务的模型ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_channel_id (channel_id)",
+        "ALTER TABLE user_token_info ADD COLUMN request_id VARCHAR(64) NULL COMMENT '请求ID'",
+        "ALTER TABLE user_token_info ADD INDEX idx_user_token_request_id (request_id)",
+        "ALTER TABLE user_token_info ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '网关内部重试次数'",
     ]
     async with engine.begin() as conn:
-        # 恢复 is_base 两池字段：开源版集群迁移会 DROP 该列，切回业务版时需补齐，
-        # 并按集群派生初始值（async1=主模型池，async2..9=异步池）
-        result = await conn.execute(
-            text(
-                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'model_manage_info'"
-            ),
-            {"db": MYSQL_DATABASE},
-        )
-        model_columns = {row[0] for row in result.fetchall()}
-        if "is_base" not in model_columns:
-            await conn.execute(text(
-                "ALTER TABLE model_manage_info ADD COLUMN is_base VARCHAR(1) NOT NULL DEFAULT '0' "
-                "COMMENT '基础默认模型：1是0否' AFTER is_stream"
-            ))
-            if "async_type" in model_columns:
-                await conn.execute(text(
-                    "UPDATE model_manage_info SET is_base = "
-                    "CASE WHEN async_type = 'async1' THEN '0' ELSE '1' END"
-                ))
-            print(" 迁移执行成功: 恢复 model_manage_info.is_base 并按 async_type 回填")
-
         for sql in migrations:
             try:
                 await conn.execute(text(sql))
@@ -192,9 +320,8 @@ async def check_database_connection():
             if data == 1:
                 print(" 数据库连接正常")
                 return True
-            else:
-                print(" 数据库连接测试失败")
-                return False
+            print(" 数据库连接测试失败")
+            return False
     except Exception as e:
         print(f" 数据库连接失败: {e}")
         import traceback

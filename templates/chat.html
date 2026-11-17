@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <title>对话 · Starggle Gateway</title>
+    <link rel="stylesheet" href="/static/chat/chat.css">
+</head>
+<body>
+<div class="app" id="app">
+    <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="会话列表">
+        <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">S</div>
+            <div class="brand-copy">
+                <div class="brand-name">Starggle Chat</div>
+                <div class="brand-sub">本地对话 · 网关直连</div>
+            </div>
+        </div>
+
+        <button class="new-chat" id="newChatBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M12 5v14M5 12h14"/>
+            </svg>
+            新对话
+        </button>
+
+        <div class="conv-scroll" id="conversationList" aria-label="历史会话"></div>
+
+        <div class="sidebar-foot">
+            <button class="side-action" id="settingsBtn" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.15.37.4.7.74.94.3.2.65.31 1.02.31H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51.75z"/>
+                </svg>
+                设置
+            </button>
+            <button class="side-action" id="importBtn" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+                </svg>
+                导入
+            </button>
+            <a class="side-action" href="/model-manage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/>
+                </svg>
+                管理台
+            </a>
+            <input type="file" id="importInput" accept="application/json,.json" hidden>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <button class="icon-btn mobile-only" id="sidebarToggle" type="button" title="打开会话列表" aria-label="打开会话列表">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+            </button>
+
+            <div class="topbar-title">
+                <button class="conv-title" id="convTitle" type="button" title="点击重命名">新对话</button>
+                <div class="conv-sub" id="convSub">本地保存</div>
+            </div>
+
+            <div class="topbar-tools">
+                <button class="model-picker" id="modelPickerBtn" type="button"
+                        title="选择模型与参数" aria-haspopup="dialog" aria-controls="modelConfigModal">
+                    <span class="model-picker-label">模型</span>
+                    <span class="model-picker-value is-empty" id="modelPickerValue">选择模型</span>
+                    <svg class="model-picker-chevron" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <datalist id="modelOptions"></datalist>
+                <button class="icon-btn" id="systemPromptBtn" type="button" title="系统提示词" aria-label="系统提示词">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 6h16M4 12h10M4 18h7"/><path d="M17 14l3 3-3 3"/>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="exportBtn" type="button" title="导出当前会话" aria-label="导出当前会话">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="messages" id="messages" aria-live="polite"></div>
+
+        <div class="composer-wrap">
+            <div class="composer">
+                <textarea id="messageInput" rows="1"
+                          placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+                <div class="composer-actions">
+                    <div class="composer-meta">
+                        <label class="think-toggle" for="thinkingToggle"
+                               title="思考模式：仅对配置为「跟随请求」的模型生效">
+                            <input type="checkbox" id="thinkingToggle" aria-label="开启或关闭思考模式">
+                            <span class="think-track" aria-hidden="true"><span class="think-thumb"></span></span>
+                            <span class="think-label">思考</span>
+                        </label>
+                        <span class="composer-hint" id="composerHint">消息仅保存在本机</span>
+                    </div>
+                    <button class="send-btn" id="sendBtn" type="button" title="发送" aria-label="发送">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-card">
+        <div class="modal-head">
+            <div>
+                <h2 id="settingsTitle">对话设置</h2>
+                <p>配置网关访问凭证和当前会话的系统提示词。</p>
+            </div>
+            <button class="icon-btn" id="settingsClose" type="button" title="关闭" aria-label="关闭">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <label class="field">
+            <span class="field-label">项目 API Key</span>
+            <input class="input" id="settingsApiKey" type="password" autocomplete="off"
+                   placeholder="sk-gw-...（本地开源模式可留空）">
+            <span class="field-hint">启用 <code>GATEWAY_TOKEN_REQUIRED</code> 或使用项目配额时填写。密钥只保存在本机浏览器。</span>
+        </label>
+
+        <label class="field">
+            <span class="field-label">模型</span>
+            <input class="input" id="settingsModel" list="modelOptions" autocomplete="off"
+                   spellcheck="false" placeholder="选择或输入模型">
+            <span class="field-hint">这里只切换模型；运营商、采样参数与思考开关请使用顶部「模型」按钮。</span>
+        </label>
+
+        <label class="field">
+            <span class="field-label">系统提示词</span>
+            <textarea class="input textarea" id="settingsPrompt" rows="4"
+                      placeholder="例如：你是一名严谨的软件工程师，回答尽量给出可执行步骤。"></textarea>
+            <span class="field-hint">写入当前会话；新会话默认沿用最近一次设置。</span>
+        </label>
+
+        <div class="field">
+            <span class="field-label">网关地址</span>
+            <div class="readonly" id="settingsBase"></div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="settingsCancel" type="button">取消</button>
+            <button class="btn btn-primary" id="settingsSave" type="button">保存设置</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="modelConfigModal" role="dialog" aria-modal="true" aria-labelledby="modelConfigTitle">
+    <div class="modal-card model-config-card">
+        <div class="modal-head">
+            <div>
+                <h2 id="modelConfigTitle">模型与参数</h2>
+                <p>选择运营商与模型，并按会话覆盖采样参数。</p>
+            </div>
+            <button class="icon-btn" id="modelConfigClose" type="button" title="关闭" aria-label="关闭">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="field">
+            <span class="field-label">运营商</span>
+            <div class="combo" id="providerCombo">
+                <input class="input combo-input" id="providerField" autocomplete="off" spellcheck="false"
+                       placeholder="选择运营商">
+                <span class="combo-arrow" aria-hidden="true">▾</span>
+                <div class="combo-list" id="providerList" role="listbox" aria-label="运营商列表"></div>
+            </div>
+            <span class="field-hint">仅用于筛选可选模型，实际路由由网关集群策略决定。</span>
+        </div>
+
+        <div class="field">
+            <span class="field-label">模型</span>
+            <div class="combo" id="modelCombo">
+                <input class="input combo-input" id="modelField" autocomplete="off" spellcheck="false"
+                       placeholder="选择或输入模型">
+                <span class="combo-arrow" aria-hidden="true">▾</span>
+                <div class="combo-list" id="modelFieldList" role="listbox" aria-label="模型列表"></div>
+            </div>
+            <span class="field-hint" id="modelFieldHint">选择运营商后自动加载模型</span>
+        </div>
+
+        <div class="field">
+            <span class="field-label">采样参数<span class="field-label-opt">留空沿用网关默认</span></span>
+            <div class="param-grid">
+                <label class="param-item">
+                    <span class="param-name">temperature <span class="param-range">0 ~ 2</span></span>
+                    <input class="input" id="paramTemperature" type="number" step="0.1" min="0" max="2"
+                           placeholder="不覆盖">
+                </label>
+                <label class="param-item">
+                    <span class="param-name">top_p <span class="param-range">0 ~ 1</span></span>
+                    <input class="input" id="paramTopP" type="number" step="0.05" min="0" max="1"
+                           placeholder="不覆盖">
+                </label>
+                <label class="param-item">
+                    <span class="param-name">top_k <span class="param-range">≥ 1</span></span>
+                    <input class="input" id="paramTopK" type="number" step="1" min="1"
+                           placeholder="不覆盖">
+                </label>
+                <label class="param-item">
+                    <span class="param-name">max_tokens <span class="param-range">≥ 1</span></span>
+                    <input class="input" id="paramMaxTokens" type="number" step="1" min="1"
+                           placeholder="不覆盖">
+                </label>
+            </div>
+            <span class="field-hint">temperature 与 top_p 互斥，填写一个会自动清空另一个；管理台已为模型配置的同名参数优先。</span>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="modelConfigCancel" type="button">取消</button>
+            <button class="btn btn-primary" id="modelConfigSave" type="button">应用</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/static/chat/chat.js" defer></script>
+</body>
+</html>

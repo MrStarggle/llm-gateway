@@ -7,12 +7,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
+from app.schemas.llm_provider import ProviderCreate, ProviderUpdate
 from app.schemas.model_manage import ModelManageCreate, ModelManageUpdate, ModelManageQuery
-from app.services import model_manage_service
+from app.services import llm_provider_service, model_manage_service, usage_manage_service
 from app.utils.response import ResponseFactory
 from app.utils.admin_auth import verify_admin_token
 from app.api.v1.controller.call_manage_controller import (
     _fetch_models_from_upstream,
+    _validate_url,
     FetchModelsBody as FetchModelsRequest,
 )
 
@@ -83,6 +85,11 @@ async def fetch_models(body: FetchModelsRequest):
     从运营商 API 拉取可用模型列表
     POST body: { com_url, api_key }
     """
+    try:
+        _validate_url(body.com_url.rstrip("/") + "/models")
+    except Exception:
+        return ResponseFactory.bad_request(message="API 地址不合法（仅支持 HTTPS 公网地址）")
+
     models, error = await _fetch_models_from_upstream(body.com_url, body.api_key)
 
     if not models and error:
@@ -90,6 +97,113 @@ async def fetch_models(body: FetchModelsRequest):
 
     models = sorted(set(models))
     return ResponseFactory.ok(data={"models": models}, message="查询成功")
+
+
+# ==================== 大模型提供商 CRUD ====================
+# 注意：/providers 系列必须定义在 /{model_id} 之前，否则会被当作模型 ID 匹配
+
+
+def _provider_row(provider, model_count: int) -> dict:
+    return {
+        "providerId": provider.provider_id,
+        "providerName": provider.provider_name,
+        "apiUrl": provider.api_url,
+        "apiKey": provider.api_key,
+        "modelCount": model_count,
+        "remarks": provider.remarks,
+        "createdAt": provider.created_at.isoformat() if provider.created_at else None,
+        "updatedAt": provider.updated_at.isoformat() if provider.updated_at else None,
+    }
+
+
+@router.get("/providers")
+async def list_providers(keyword: str = "", db: AsyncSession = Depends(get_db)):
+    """提供商列表（含关联模型数量）"""
+    providers = await llm_provider_service.list_providers(db, keyword)
+    counts = await llm_provider_service.get_model_counts(db)
+    data = [_provider_row(p, counts.get(p.provider_id, 0)) for p in providers]
+    return ResponseFactory.ok(data={"list": data, "total": len(data)}, message="查询成功")
+
+
+@router.get("/providers/{provider_id}")
+async def get_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
+    """提供商详情"""
+    provider = await llm_provider_service.get_provider_by_id(db, provider_id)
+    if provider is None:
+        return ResponseFactory.not_found(message="提供商不存在")
+    counts = await llm_provider_service.get_model_counts(db)
+    return ResponseFactory.ok(data=_provider_row(provider, counts.get(provider_id, 0)), message="查询成功")
+
+
+@router.post("/providers")
+async def create_provider(data: ProviderCreate, db: AsyncSession = Depends(get_db)):
+    """新增提供商"""
+    try:
+        provider = await llm_provider_service.create_provider(db, data)
+    except ValueError as e:
+        return ResponseFactory.bad_request(message=str(e))
+    return ResponseFactory.created(data=_provider_row(provider, 0), message="新增成功")
+
+
+@router.put("/providers/{provider_id}")
+async def update_provider(provider_id: str, data: ProviderUpdate, db: AsyncSession = Depends(get_db)):
+    """更新提供商（名称/地址/密钥级联同步到关联模型）"""
+    try:
+        provider = await llm_provider_service.update_provider(db, provider_id, data)
+    except ValueError as e:
+        return ResponseFactory.bad_request(message=str(e))
+    if provider is None:
+        return ResponseFactory.not_found(message="提供商不存在")
+    counts = await llm_provider_service.get_model_counts(db)
+    return ResponseFactory.ok(
+        data=_provider_row(provider, counts.get(provider_id, 0)), message="更新成功",
+    )
+
+
+@router.delete("/providers/{provider_id}")
+async def delete_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
+    """删除提供商（仍有关联模型时拒绝）"""
+    deleted, reason = await llm_provider_service.delete_provider(db, provider_id)
+    if not deleted:
+        return ResponseFactory.bad_request(message=reason)
+    return ResponseFactory.ok(message="删除成功")
+
+
+# ==================== 用量统计 / 调用记录 ====================
+# 同样必须定义在 /{model_id} 之前
+
+
+@router.get("/usage/overview")
+async def usage_overview(
+        days: int = 7,
+        group_by: str = "",
+        db: AsyncSession = Depends(get_db),
+):
+    """用量总览：汇总 + 每日趋势 + 按模型分布 + 自定义分组明细（group_by 逗号分隔）"""
+    dims = [d.strip() for d in group_by.split(",") if d.strip()]
+    data = await usage_manage_service.get_usage_overview(db, days, dims)
+    return ResponseFactory.ok(data=data, message="查询成功")
+
+
+@router.get("/calls")
+async def list_call_records(
+        page: int = 1,
+        page_size: int = 20,
+        project_id: str = "",
+        user_id: str = "",
+        model: str = "",
+        purpose: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        db: AsyncSession = Depends(get_db),
+):
+    """调用记录分页列表"""
+    records, total = await usage_manage_service.list_call_records(
+        db, page=page, page_size=page_size, project_id=project_id,
+        user_id=user_id, model=model,
+        purpose=purpose, start_date=start_date, end_date=end_date,
+    )
+    return ResponseFactory.ok(data={"list": records, "total": total}, message="查询成功")
 
 
 # ==================== 模型 CRUD ====================
@@ -120,15 +234,21 @@ async def get_model(model_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/")
 async def create_model(data: ModelManageCreate, db: AsyncSession = Depends(get_db)):
-    """新增模型"""
-    model = await model_manage_service.create_model(db, data)
+    """新增模型（通过 provider_id 关联提供商并回填地址/密钥）"""
+    try:
+        model = await model_manage_service.create_model(db, data)
+    except ValueError as e:
+        return ResponseFactory.bad_request(message=str(e))
     return ResponseFactory.created(data=model, message="新增成功")
 
 
 @router.put("/{model_id}")
 async def update_model(model_id: str, data: ModelManageUpdate, db: AsyncSession = Depends(get_db)):
     """更新模型（部分更新）—— 服务层为单一真实来源，不存在则返回 404"""
-    model = await model_manage_service.update_model(db, model_id, data)
+    try:
+        model = await model_manage_service.update_model(db, model_id, data)
+    except ValueError as e:
+        return ResponseFactory.bad_request(message=str(e))
     if not model:
         return ResponseFactory.not_found(message="模型不存在")
     return ResponseFactory.ok(data=model, message="更新成功")
