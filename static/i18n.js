@@ -321,7 +321,7 @@
     '便于排查': 'for troubleshooting',
 
     // ==================== 聊天页 ====================
-    '对话 · Starggle Gateway': 'Chat · Starggle Gateway',
+    '对话 · LLM Gateway': 'Chat · LLM Gateway',
     '本地对话 · 网关直连': 'Local chat · direct to gateway',
     '新对话': 'New chat',
     '设置': 'Settings',

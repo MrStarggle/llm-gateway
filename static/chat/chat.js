@@ -3,9 +3,9 @@
 
     const API_CHAT = '/v1/chat/completions';
     const API_MODELS = '/v1/models';
-    const LS_SETTINGS = 'starggle.chat.settings';
-    const LS_CONVERSATIONS = 'starggle.chat.conversations';
-    const IDB_NAME = 'starggle-chat';
+    const LS_SETTINGS = 'llm-gateway.chat.settings';
+    const LS_CONVERSATIONS = 'llm-gateway.chat.conversations';
+    const IDB_NAME = 'llm-gateway-chat';
     const IDB_STORE = 'conversations';
     const MAX_CONTEXT_MESSAGES = 40;
     const MAX_TITLE_LENGTH = 36;
@@ -535,7 +535,7 @@
 
         const mark = document.createElement('div');
         mark.className = 'empty-mark';
-        mark.textContent = 'S';
+        mark.textContent = 'L';
 
         const title = document.createElement('h1');
         title.textContent = '开始一段对话';
@@ -1453,7 +1453,7 @@
             conversation: conv,
         };
         downloadFile(
-            'starggle-chat-' + new Date().toISOString().slice(0, 10) + '.json',
+            'llm-gateway-chat-' + new Date().toISOString().slice(0, 10) + '.json',
             JSON.stringify(payload, null, 2)
         );
         showToast('已导出当前会话');
