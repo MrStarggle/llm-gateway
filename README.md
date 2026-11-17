@@ -7,6 +7,9 @@ Configure providers, models, clusters, and request parameters from one admin con
 usage for every call. It absorbs the call-layer plumbing — protocol differences, retries,
 failover, quotas, usage, and logs — so your services only need an OpenAI-compatible client.
 
+Model clusters keep realtime calls isolated from background batch jobs, so night-time batch
+parsing or report generation cannot starve core traffic.
+
 > [!WARNING]
 > The default admin account is `admin / admin` and `JWT_SECRET_KEY` is a placeholder.
 > **Use these defaults for local evaluation only.** Before exposing the service to a LAN or the
@@ -19,10 +22,17 @@ Built for internal backends and small teams that call LLMs from their own servic
 APIs, background jobs, report generation, or multiple product lines that need separate quotas
 and failure isolation.
 
-- **Good fit**: one or a few operators, internal traffic, OpenAI-compatible clients, SQLite on a
-  single host, or MySQL when you need multiple instances
+- **Good fit**: one or a few operators, internal traffic, on-prem/private deployments,
+  OpenAI-compatible clients, SQLite on a single host, or MySQL when you need multiple instances
 - **Not a fit**: public multi-tenant API resale, per-user recharge/billing, RBAC across
   departments, or agent chat-log analytics. Use new-api, one-api, or LiteLLM for those.
+
+Typical use cases:
+
+- **ERP / inventory / CRM add-ons**: document and contract summaries, natural-language inventory
+  or receivables queries, batch report analysis
+- **Internal workflow engines**: a model call at each step, with cost caps and automatic failover
+- **Several internal tools sharing one provider setup**, isolated by project and cluster
 
 The gateway owns call-layer concerns: provider protocols, retries, circuit breaking, quotas,
 usage accounting, and logging. Your business code still owns prompt design, result validation,
@@ -47,7 +57,7 @@ and business-level fallbacks.
 - **Payload log switch**: full LLM request/response logs are on by default and can be turned off under "Channel Health"; logs may contain user prompts
 - **Bilingual UI**: English by default, with a one-click switch to Chinese in the bottom-right corner
 - **Single-admin mode**: credentials from environment variables, JWT login, no extra user system required
-- **Zero-config storage**: SQLite by default; switch to MySQL for multi-instance deployments
+- **Zero-config storage**: SQLite by default, no Redis or message queue required; switch to MySQL for multi-instance deployments
 
 ## How it compares
 
