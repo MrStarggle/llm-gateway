@@ -229,6 +229,7 @@ async def init_database():
         from app.models.project_usage_daily import ProjectUsageDaily  # noqa: F401
         from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401
         from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401
+        from app.models.system_config import SystemConfig  # noqa: F401
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print(" ORM 表结构检查完成")

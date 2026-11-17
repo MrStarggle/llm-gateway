@@ -884,6 +884,19 @@
                 <div class="card" style="margin-top:18px">
                     <div class="card-head">
                         <div>
+                            <div class="card-title">LLM 报文日志</div>
+                            <div class="card-sub">开启后写入完整请求与响应；关闭后只保留摘要。日志可能包含用户提示词。</div>
+                        </div>
+                        <label class="toggle" title="切换完整 LLM 报文日志">
+                            <input type="checkbox" id="logPayloadEnabled" checked onchange="toggleLogPayload(this)">
+                            <span class="toggle-track"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:18px">
+                    <div class="card-head">
+                        <div>
                             <div class="card-title">集群路由策略</div>
                             <div class="card-sub">重试、熔断与成本优先；修改后点击保存</div>
                         </div>
@@ -1577,6 +1590,7 @@ let _projectCache = [];         // 项目列表缓存
 let _currentProject = null;     // 当前展开的项目
 let _projectTokens = [];        // 当前项目 Token
 let _healthData = null;         // 渠道健康看板数据
+let _logPayloadEnabled = true;  // LLM 报文日志开关（默认开启）
 
 // ==================== 鉴权 ====================
 function checkAuth() {
@@ -3513,8 +3527,42 @@ function healthApi(method, path, body) {
     return api(method, path, body, moduleApiBase('health-manage'));
 }
 
+async function loadLogSettings() {
+    try {
+        const result = await healthApi('GET', '/log-settings');
+        const enabled = !!(result?.data?.enabled);
+        _logPayloadEnabled = enabled;
+        const input = document.getElementById('logPayloadEnabled');
+        if (input) input.checked = enabled;
+    } catch (e) {
+        // 读取失败时保持默认开启
+    }
+}
+
+async function toggleLogPayload(input) {
+    const next = !!input.checked;
+    input.disabled = true;
+    try {
+        const result = await healthApi('PUT', '/log-settings', { enabled: next });
+        if (result.code === 200) {
+            _logPayloadEnabled = !!(result.data?.enabled);
+            input.checked = _logPayloadEnabled;
+            toast(_logPayloadEnabled ? '已开启 LLM 报文日志' : '已关闭 LLM 报文日志');
+        } else {
+            input.checked = !next;
+            toast(result.message || '保存失败', false);
+        }
+    } catch (e) {
+        input.checked = !next;
+        toast('保存失败', false);
+    } finally {
+        input.disabled = false;
+    }
+}
+
 async function loadHealth(force) {
     if (_loaded.health && !force) return;
+    loadLogSettings();
     try {
         const result = await healthApi('GET', '/overview');
         _healthData = result?.data || {};

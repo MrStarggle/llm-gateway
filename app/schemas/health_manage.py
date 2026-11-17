@@ -10,3 +10,8 @@ class RoutingConfigUpdate(BaseModel):
     cooldown_seconds: int = Field(default=60, ge=0, le=3600, description="熔断冷却秒数")
     output_ratio: float = Field(default=0.3, ge=0, le=1, description="成本估算输出占比")
     enabled: int = Field(default=1, ge=0, le=1, description="是否启用健康路由")
+
+
+class LogSettingsUpdate(BaseModel):
+    """LLM 报文日志开关"""
+    enabled: bool

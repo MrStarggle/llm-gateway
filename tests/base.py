@@ -22,6 +22,7 @@ from app.config.database import DATABASE_URL, Base, engine  # noqa: E402
 assert TEST_DB.as_posix() in DATABASE_URL, f"测试数据库配置错误: {DATABASE_URL}"
 from app.models.channel_health_info import ChannelHealthInfo  # noqa: F401,E402
 from app.models.cluster_routing_config import ClusterRoutingConfig  # noqa: F401,E402
+from app.models.system_config import SystemConfig  # noqa: F401,E402
 from app.models.llm_provider_info import LlmProviderInfo  # noqa: F401,E402
 from app.models.model_manage_info import ModelManageInfo  # noqa: F401,E402
 from app.models.project_info import ProjectInfo  # noqa: F401,E402

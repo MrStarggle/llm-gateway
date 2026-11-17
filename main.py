@@ -1,4 +1,5 @@
 """LLM Gateway - 多厂商大模型统一接入网关"""
+import asyncio
 import logging
 import os
 import re
@@ -57,9 +58,30 @@ async def lifespan(_app: FastAPI):
         except Exception as e:
             logger.warning("调用明细清理失败（不影响启动）: %s", e)
 
+    # LLM 报文日志开关（默认开启，可在管理台「渠道健康」切换）
+    log_refresh_task = None
+    if db_ok:
+        try:
+            from app.config.database import AsyncSessionLocal
+            from app.services import log_settings_service
+            async with AsyncSessionLocal() as db:
+                enabled = await log_settings_service.load(db)
+            log_refresh_task = asyncio.create_task(log_settings_service.refresh_loop())
+            logger.info("LLM 报文日志：%s", "开启" if enabled else "关闭")
+        except Exception as e:
+            logger.warning("加载 LLM 报文日志开关失败，使用默认值: %s", e)
+
     if DEBUG:
-        logger.info("DEBUG 模式已开启 — 请求体将完整打印到日志")
+        logger.info("DEBUG 模式已开启 — 错误响应将包含调试信息")
     yield
+
+    if log_refresh_task:
+        log_refresh_task.cancel()
+        try:
+            await log_refresh_task
+        except asyncio.CancelledError:
+            pass
+
     # 关闭时：清理资源
     from app.config.database import engine
     await engine.dispose()
@@ -67,6 +89,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="LLM Gateway", lifespan=lifespan)
+app.state.DEBUG = DEBUG
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 

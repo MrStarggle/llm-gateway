@@ -6,14 +6,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.models.model_manage_info import ModelManageInfo
-from app.schemas.health_manage import RoutingConfigUpdate
-from app.services import health_manage_service
+from app.schemas.health_manage import LogSettingsUpdate, RoutingConfigUpdate
+from app.services import health_manage_service, log_settings_service
 from app.utils.admin_auth import verify_admin_token
 from app.utils.response import ResponseFactory
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_admin_token)])
+
+
+@router.get("/log-settings")
+async def get_log_settings(db: AsyncSession = Depends(get_db)):
+    """LLM 报文日志开关"""
+    enabled = await log_settings_service.get_enabled(db)
+    return ResponseFactory.ok(data={"enabled": enabled}, message="查询成功")
+
+
+@router.put("/log-settings")
+async def update_log_settings(data: LogSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    """切换完整 LLM 报文日志"""
+    enabled = await log_settings_service.set_enabled(db, data.enabled)
+    return ResponseFactory.ok(data={"enabled": enabled}, message="更新成功")
 
 
 @router.get("/overview")

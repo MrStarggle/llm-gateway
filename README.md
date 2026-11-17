@@ -28,6 +28,7 @@ usage for every call.
 - **Request tracing**: pass through or generate `X-Request-Id`; response headers expose the actual model, cluster, and retry count
 - **Admin console**: providers, models, clusters, projects, keys, channel health, and integration docs in one place
 - **Built-in chat UI**: `/chat` serves an offline Chatbox-style client with local conversation history, streaming, stop, regenerate, and JSON import/export
+- **Payload log switch**: full LLM request/response logs are on by default and can be turned off under "Channel Health"; logs may contain user prompts
 - **Bilingual UI**: English by default, with a one-click switch to Chinese in the bottom-right corner
 - **Single-admin mode**: credentials from environment variables, JWT login, no extra user system required
 - **Zero-config storage**: SQLite by default; switch to MySQL for multi-instance deployments
@@ -128,7 +129,7 @@ You can also install `requirements-dev.txt` and run them with pytest.
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin console credentials (stored in plaintext in the env, single-admin) | `admin` / `admin` |
 | `JWT_SECRET_KEY` | JWT signing key; must be changed in production | code default `dev-only-change-me`; the example file uses a placeholder |
 | `PORT` | Service port | `9010` |
-| `GATEWAY_DEBUG` | Set to `1` to log request bodies for debugging | `0` |
+| `GATEWAY_DEBUG` | Set to `1` to include debug details in error responses | `0` |
 | `GATEWAY_TOKEN_REQUIRED` | Set to `1` to require an `sk-gw-` project token on every call | `0` |
 | `USAGE_RETENTION_DAYS` | Days to keep raw call records; `0` disables cleanup | `90` |
 | `CORS_ORIGINS` | Allowed origins for the admin console, comma-separated | empty (same-origin is enough) |
@@ -193,7 +194,7 @@ There is no automatic data migration between SQLite and MySQL; export/import man
 - Change `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET_KEY` before any public deployment
 - Put the service behind an HTTPS reverse proxy (Nginx/Caddy) and rate-limit login at the proxy
 - Run only one process in SQLite mode; do not use multiple workers or share the file across instances
-- Full request bodies and model responses are **not logged by default**. `GATEWAY_DEBUG=1` enables them and may include user prompts
+- Full LLM request/response payloads are **written to the server log by default**. Turn them off under "Channel Health → LLM payload logs". Logs may contain user prompts and should be protected accordingly
 - Project tokens are stored as SHA-256 hashes only; the full secret is returned once at creation/rotation
 - Gateway tokens are never forwarded upstream; upstream keys always come from server-side config
 - Channel health stores only error types/HTTP status codes, never upstream error bodies, to avoid storing prompt fragments

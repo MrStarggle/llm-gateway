@@ -7,7 +7,6 @@
 import copy
 import json
 import logging
-import os
 import re
 import time
 from typing import Any, AsyncGenerator, Optional
@@ -20,16 +19,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
-from app.services import call_manage_service, health_manage_service, project_manage_service
+from app.services import (
+    call_manage_service,
+    health_manage_service,
+    log_settings_service,
+    project_manage_service,
+)
 from app.utils.gateway_error import gateway_error_response
 from app.utils.response import ResponseFactory
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# 完整请求体/响应正文可能包含用户提示词，默认不落日志
-DEBUG = os.getenv("GATEWAY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
 
 # ── 模型名称校验 ──
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-./@:]+$")
@@ -381,7 +382,7 @@ def _prepare_forward_plan(
             "Content-Type": "application/json",
         }
 
-    if DEBUG:
+    if log_settings_service.is_payload_logging_enabled():
         logger.info(
             "POST /call-manage/chat/completions -> 发给上游的请求报文:\n%s",
             json.dumps(body, ensure_ascii=False, indent=2),
@@ -1154,15 +1155,15 @@ async def chat_completions(
                         _model_name, elapsed, total_bytes, len(content_text),
                         len(reasoning_text), usage_info,
                     )
-                    if DEBUG and content_text:
+                    if log_settings_service.is_payload_logging_enabled():
                         logger.info(
-                            "POST /call-manage/chat/completions <- STREAM 完整返回内容 model=%s:\n%s",
-                            _model_name, content_text,
-                        )
-                    if DEBUG and reasoning_text:
-                        logger.info(
-                            "POST /call-manage/chat/completions <- STREAM 思维链 model=%s:\n%s",
-                            _model_name, reasoning_text,
+                            "POST /call-manage/chat/completions <- STREAM 完整返回报文 model=%s:\n%s",
+                            _model_name,
+                            json.dumps({
+                                "content": content_text,
+                                "reasoning_content": reasoning_text,
+                                "usage": accumulated_usage or None,
+                            }, ensure_ascii=False, indent=2),
                         )
 
                     if user_id and upstream_ok:
@@ -1262,7 +1263,7 @@ async def chat_completions(
                     resp.status_code, model_name, elapsed, len(resp_text),
                     attempt_index + 1, len(candidates),
                 )
-                if DEBUG:
+                if log_settings_service.is_payload_logging_enabled():
                     logger.info(
                         "POST /call-manage/chat/completions <- 完整返回报文:\n%s", resp_text,
                     )

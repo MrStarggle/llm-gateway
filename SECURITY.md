@@ -33,6 +33,6 @@ This project is a self-hosted gateway. Operators are responsible for securing th
 - Change the default `ADMIN_USERNAME` / `ADMIN_PASSWORD` and `JWT_SECRET_KEY`
 - Serve over HTTPS behind a reverse proxy, and restrict admin console access at the proxy
 - Never commit `.env`, `data/`, database files, logs, or any upstream API key
-- `GATEWAY_DEBUG=1` logs request bodies and model responses; keep it `0` in production
+- Full LLM request/response payloads are logged by default; turn them off under "Channel Health → LLM payload logs" and protect log files accordingly
 - Project tokens are stored as SHA-256 hashes; the full secret is shown only once at creation/rotation — store it securely
 - Rate-limit the login endpoint at the reverse proxy if it is exposed to the internet

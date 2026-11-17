@@ -165,3 +165,10 @@ CREATE TABLE IF NOT EXISTS cluster_routing_config
     enabled             INT         NOT NULL DEFAULT 1 COMMENT '是否启用健康路由',
     updated_at          TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='集群路由配置表';
+
+CREATE TABLE IF NOT EXISTS system_config
+(
+    config_key   VARCHAR(64) NOT NULL PRIMARY KEY COMMENT '配置键',
+    config_value TEXT        NOT NULL COMMENT '配置值',
+    updated_at   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统运行配置表';
