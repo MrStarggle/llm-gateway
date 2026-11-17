@@ -30,6 +30,27 @@
 - **单管理员模式**：环境变量配置账号，JWT 登录，无需额外用户系统
 - **零配置存储**：默认 SQLite，开箱即用；需要多实例时可切换 MySQL
 
+## 横向对比
+
+LLM Gateway 不是 LiteLLM / new-api 的替代品。它面向小型自托管场景：想要一个紧凑、
+SQLite 优先、带集群路由、渠道健康和项目配额的网关，但不需要多租户用户体系。
+
+| | LLM Gateway | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
+|---|---|---|---|---|
+| 许可证 | Apache-2.0 | MIT | AGPL-3.0 | MIT |
+| 技术栈 | Python / FastAPI | Python | Go / React | Go |
+| 管理模型 | 环境变量单管理员 | 多用户、团队、虚拟 Key | 多用户、分组、OAuth | 多用户、分组 |
+| 提供商 | 预设清单，可添加任意 OpenAI 兼容端点 | 100+ 集成 | 40+ 提供商 | 多种 OpenAI 兼容提供商 |
+| 路由 | 9 个集群（`async1..async9`）；轮询、成本优先、延迟优先 | 加权、最少繁忙、延迟、用量、成本、回退链 | 渠道分组 + 优先级/权重 | 渠道分组、优先级、负载均衡 |
+| 渠道健康 | 成功率、延迟、熔断、半开探测 | 重试、冷却、回退 | 渠道测试、自动禁用 | 渠道测试、自动禁用 |
+| 配额 | 按项目：每日/每月调用数、Token、成本 | 按 Key/用户/团队预算 | 用户与 Token 配额、在线充值 | 用户与 Token 配额、兑换码 |
+| 存储 | SQLite（默认）/ MySQL | PostgreSQL（+ Redis） | SQLite / MySQL / PostgreSQL（+ Redis） | SQLite / MySQL / PostgreSQL（+ Redis） |
+
+**本项目的短板：** 提供商覆盖、多租户用户/OAuth、guardrails、Redis 多实例路由。需要这些能力
+请选择 LiteLLM 或 new-api。
+
+*对比基于 2026 年 11 月的公开文档，欢迎通过 Issue 指正。*
+
 ## 界面截图
 
 | 用量面板 | 模型与渠道健康 |

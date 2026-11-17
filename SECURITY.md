@@ -7,7 +7,7 @@
 Please do **not** report security vulnerabilities through public issues. Use GitHub's private
 vulnerability reporting:
 
-<https://github.com/MrStarggle/StarggleAPI/security/advisories/new>
+<https://github.com/MrStarggle/llm-gateway/security/advisories/new>
 
 Please include as much as possible:
 

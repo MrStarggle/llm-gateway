@@ -32,6 +32,28 @@ usage for every call.
 - **Single-admin mode**: credentials from environment variables, JWT login, no extra user system required
 - **Zero-config storage**: SQLite by default; switch to MySQL for multi-instance deployments
 
+## How it compares
+
+LLM Gateway is not a drop-in replacement for LiteLLM or new-api. It targets small self-hosted
+deployments that want a compact, SQLite-first gateway with cluster routing, channel health, and
+per-project quotas, without a multi-tenant user system.
+
+| | LLM Gateway | [LiteLLM](https://github.com/BerriAI/litellm) | [new-api](https://github.com/QuantumNous/new-api) | [one-api](https://github.com/songquanpeng/one-api) |
+|---|---|---|---|---|
+| License | Apache-2.0 | MIT | AGPL-3.0 | MIT |
+| Stack | Python / FastAPI | Python | Go / React | Go |
+| Admin model | one admin from env vars | multi-user, teams, virtual keys | multi-user, groups, OAuth | multi-user, groups |
+| Providers | preset list; any OpenAI-compatible endpoint can be added | 100+ integrations | 40+ providers | many OpenAI-compatible providers |
+| Routing | nine clusters (`async1..async9`); round-robin, cost-first, latency-first | weighted, least-busy, latency, usage, cost, fallback chains | channel groups with priority and weight | channel groups, priority, load balancing |
+| Channel health | success rate, latency, circuit breaker, half-open probe | retries, cooldowns, fallbacks | channel test, auto-disable | channel test, auto-disable |
+| Quotas | per project: daily/monthly calls, tokens, cost | per key/user/team budgets | user and token quotas with recharge | user and token quotas with redemption |
+| Storage | SQLite (default) / MySQL | PostgreSQL (+ Redis) | SQLite / MySQL / PostgreSQL (+ Redis) | SQLite / MySQL / PostgreSQL (+ Redis) |
+
+**Where this project is weaker:** provider coverage, multi-tenant users/OAuth, guardrails, and
+Redis-backed multi-instance routing. If you need those, use LiteLLM or new-api.
+
+*Comparison reflects public documentation as of November 2026. Corrections are welcome via an issue.*
+
 ## Screenshots
 
 | Usage dashboard | Models and channel health |

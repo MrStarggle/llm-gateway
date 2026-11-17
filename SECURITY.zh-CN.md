@@ -6,7 +6,7 @@
 
 请**不要**通过公开 Issue 报告安全漏洞。请使用 GitHub 仓库的私密报告功能：
 
-<https://github.com/MrStarggle/StarggleAPI/security/advisories/new>
+<https://github.com/MrStarggle/llm-gateway/security/advisories/new>
 
 报告中请尽量包含：
 
