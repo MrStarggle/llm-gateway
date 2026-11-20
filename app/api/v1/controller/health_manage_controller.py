@@ -8,7 +8,8 @@ from app.config.database import get_db
 from app.models.model_manage_info import ModelManageInfo
 from app.schemas.health_manage import LogSettingsUpdate, RoutingConfigUpdate
 from app.services import health_manage_service, log_settings_service
-from app.utils.admin_auth import verify_admin_token
+from app.utils.admin_auth import require_permission, verify_admin_token
+from app.utils.rbac import Perm
 from app.utils.response import ResponseFactory
 
 logger = logging.getLogger(__name__)
@@ -16,35 +17,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(verify_admin_token)])
 
 
-@router.get("/log-settings")
+@router.get(
+    "/log-settings",
+    dependencies=[Depends(require_permission(Perm.HEALTH_READ))],
+)
 async def get_log_settings(db: AsyncSession = Depends(get_db)):
     """LLM 报文日志开关"""
     enabled = await log_settings_service.get_enabled(db)
     return ResponseFactory.ok(data={"enabled": enabled}, message="查询成功")
 
 
-@router.put("/log-settings")
+@router.put(
+    "/log-settings",
+    dependencies=[Depends(require_permission(Perm.HEALTH_WRITE))],
+)
 async def update_log_settings(data: LogSettingsUpdate, db: AsyncSession = Depends(get_db)):
     """切换完整 LLM 报文日志"""
     enabled = await log_settings_service.set_enabled(db, data.enabled)
     return ResponseFactory.ok(data={"enabled": enabled}, message="更新成功")
 
 
-@router.get("/overview")
+@router.get(
+    "/overview",
+    dependencies=[Depends(require_permission(Perm.HEALTH_READ))],
+)
 async def health_overview(db: AsyncSession = Depends(get_db)):
     """渠道健康看板：集群汇总 + 渠道明细 + 路由配置"""
     data = await health_manage_service.get_health_overview(db)
     return ResponseFactory.ok(data=data, message="查询成功")
 
 
-@router.get("/routing")
+@router.get(
+    "/routing",
+    dependencies=[Depends(require_permission(Perm.HEALTH_READ))],
+)
 async def list_routing(db: AsyncSession = Depends(get_db)):
     """async1..async9 路由配置"""
     data = await health_manage_service.list_routing_configs(db)
     return ResponseFactory.ok(data={"list": data, "total": len(data)}, message="查询成功")
 
 
-@router.put("/routing/{async_type}")
+@router.put(
+    "/routing/{async_type}",
+    dependencies=[Depends(require_permission(Perm.HEALTH_WRITE))],
+)
 async def update_routing(
         async_type: str,
         data: RoutingConfigUpdate,
@@ -58,7 +74,10 @@ async def update_routing(
     return ResponseFactory.ok(data=config.to_dict(), message="更新成功")
 
 
-@router.post("/channels/{model_id}/reset")
+@router.post(
+    "/channels/{model_id}/reset",
+    dependencies=[Depends(require_permission(Perm.HEALTH_WRITE))],
+)
 async def reset_channel(model_id: str, db: AsyncSession = Depends(get_db)):
     """手动重置渠道熔断状态"""
     model = await db.get(ModelManageInfo, model_id)

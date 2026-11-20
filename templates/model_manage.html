@@ -94,6 +94,15 @@
     .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.3px; }
     .page-desc { font-size: 12.5px; color: var(--text-3); margin-top: 5px; }
     .topbar-actions { display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
+    .role-badge {
+        display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px;
+        font-size: 12px; font-weight: 600; white-space: nowrap;
+        background: #f3f4f7; color: var(--text-2); border: 1px solid var(--border);
+    }
+    .role-badge.role-admin { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+    .role-badge.role-operator { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .role-badge.role-developer { background: #f3ecff; color: #7c3aed; border-color: transparent; }
+    .role-badge.role-viewer { background: #f3f4f7; color: var(--text-3); border-color: transparent; }
     .content { padding: 0 34px 40px; max-width: 1480px; width: 100%; }
     .section { display: none; }
     .section.active { display: block; animation: fadeUp .22s ease; }
@@ -533,6 +542,7 @@
                 <p class="page-desc" id="pageDesc">查看平台 LLM 调用量与 Token 消耗</p>
             </div>
             <div class="topbar-actions">
+                <span class="role-badge" id="roleBadge" style="display:none"></span>
                 <button class="btn btn-ghost" onclick="refreshSection()" title="刷新当前页面">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
                     刷新
@@ -686,7 +696,7 @@
             <!-- ============ 大模型提供商管理 ============ -->
             <section class="section" id="sec-providers">
                 <div class="section-head" style="justify-content:flex-end">
-                    <button class="btn btn-primary" onclick="openProviderModal()">
+                    <button class="btn btn-primary" data-perm="providers:write" onclick="openProviderModal()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                         新增提供商
                     </button>
@@ -748,7 +758,7 @@
                             <option value="async9">集群9</option>
                         </select>
                         <div class="spacer"></div>
-                        <button class="btn btn-primary" onclick="openModelModal()">
+                        <button class="btn btn-primary" data-perm="models:write" onclick="openModelModal()">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                             新增模型
                         </button>
@@ -786,7 +796,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                         <input class="input" id="projectKeyword" placeholder="搜索项目名称" oninput="loadProjects(true)">
                     </div>
-                    <button class="btn btn-primary" onclick="openProjectModal()">
+                    <button class="btn btn-primary" data-perm="projects:write" onclick="openProjectModal()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                         新增项目
                     </button>
@@ -822,9 +832,9 @@
                         </div>
                         <div class="flex">
                             <button class="btn btn-ghost btn-sm" onclick="showProjectCalls()">调用记录</button>
-                            <button class="btn btn-ghost btn-sm" onclick="editCurrentProject()">编辑项目</button>
+                            <button class="btn btn-ghost btn-sm" data-perm="projects:write" onclick="editCurrentProject()">编辑项目</button>
                             <button class="btn btn-ghost btn-sm" onclick="exportProjectCsv()">导出 CSV</button>
-                            <button class="btn btn-primary btn-sm" onclick="openTokenModal()">新建 Token</button>
+                            <button class="btn btn-primary btn-sm" data-perm="tokens:write" onclick="openTokenModal()">新建 Token</button>
                         </div>
                     </div>
                     <div class="stat-grid" id="projectDetailStats"></div>
@@ -1531,6 +1541,7 @@ print(resp.choices[0].message.content)</pre>
 //  { key:'prod',  label:'生产环境', apiBase:'https://api.example.com/api/v1/model-manage' }]
 // loginUrl 缺省按 apiBase 的 origin 推导为 {origin}/api/v1/auth/login。
 const STORAGE_KEY = 'llm_admin_jwt';
+const IDENTITY_KEY = 'llm_admin_identity';
 const DEFAULT_ENV = {
     key: 'current',
     label: '当前环境',
@@ -1572,6 +1583,7 @@ const SECTION_META = {
 const OPENROUTER_DEFAULT_PROVIDER = '{"order": ["DeepInfra","GMICloud","CoreWeave"], "allow_fallbacks": true}';
 
 let _adminToken = null;
+let _identity = null;           // { userId, userName, role, roleLabel, permissions[] }
 let _env = ENVIRONMENTS[0].key;
 let API_BASE = ENVIRONMENTS[0].apiBase;
 let _currentSection = 'usage';
@@ -1592,13 +1604,90 @@ let _projectTokens = [];        // 当前项目 Token
 let _healthData = null;         // 渠道健康看板数据
 let _logPayloadEnabled = true;  // LLM 报文日志开关（默认开启）
 
-// ==================== 鉴权 ====================
+// ==================== 鉴权 / 角色 ====================
+// 权限只是前端显隐的体验优化，服务端按接口逐项校验；未识别的身份先按可见处理。
+function can(permission) {
+    if (!_identity) return true;
+    return (_identity.permissions || []).includes(permission);
+}
+
+function loadIdentityFromStorage() {
+    try {
+        const raw = localStorage.getItem(IDENTITY_KEY);
+        _identity = raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        _identity = null;
+    }
+}
+
+function saveIdentity(user) {
+    _identity = user || null;
+    if (_identity) {
+        localStorage.setItem(IDENTITY_KEY, JSON.stringify(_identity));
+    } else {
+        localStorage.removeItem(IDENTITY_KEY);
+    }
+    applyRoleUI();
+}
+
+function applyRoleUI() {
+    const badge = document.getElementById('roleBadge');
+    if (badge) {
+        if (_identity && _identity.roleLabel) {
+            badge.textContent = (_identity.userName ? _identity.userName + ' · ' : '') + _identity.roleLabel;
+            badge.className = 'role-badge role-' + (_identity.role || 'viewer');
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+    document.querySelectorAll('[data-perm]').forEach(el => {
+        el.style.display = can(el.dataset.perm) ? '' : 'none';
+    });
+    const logToggle = document.getElementById('logPayloadEnabled');
+    if (logToggle) logToggle.disabled = !can('health:write');
+}
+
+function authBaseUrl() {
+    return getLoginUrl().replace(/\/login\/?$/, '');
+}
+
+// 用当前 Token 拉取最新身份：账号被移除 / 角色被调整时立即生效
+async function refreshIdentity() {
+    if (!_adminToken) {
+        saveIdentity(null);
+        return false;
+    }
+    try {
+        const res = await fetch(authBaseUrl() + '/me', {
+            headers: { 'Authorization': 'Bearer ' + _adminToken }
+        });
+        if (res.status === 401) {
+            _adminToken = null;
+            localStorage.removeItem(STORAGE_KEY);
+            saveIdentity(null);
+            showAuthOverlay();
+            return false;
+        }
+        const result = await res.json();
+        if (result?.data?.role) {
+            saveIdentity(result.data);
+            return true;
+        }
+    } catch (e) {
+        // 网络异常时沿用本地缓存的身份
+    }
+    return false;
+}
+
 function checkAuth() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
         _adminToken = saved;
+        loadIdentityFromStorage();
         document.getElementById('authOverlay').classList.remove('active');
         document.getElementById('btnLock').style.display = '';
+        applyRoleUI();
         return true;
     }
     showAuthOverlay();
@@ -1662,9 +1751,11 @@ async function doUnlock() {
         if (result?.data?.success) {
             _adminToken = result.data.token;
             localStorage.setItem(STORAGE_KEY, _adminToken);
+            saveIdentity(result.data.user || null);
             document.getElementById('authOverlay').classList.remove('active');
             document.getElementById('btnLock').style.display = '';
-            toast('登录成功，欢迎 ' + (result.data.user?.userName || username));
+            const user = result.data.user || {};
+            toast('登录成功，欢迎 ' + (user.userName || username) + (user.roleLabel ? '（' + user.roleLabel + '）' : ''));
             _loaded = {};
             _providers = null;
             preloadProviders();
@@ -1685,6 +1776,7 @@ async function doUnlock() {
 function lockPage() {
     _adminToken = null;
     localStorage.removeItem(STORAGE_KEY);
+    saveIdentity(null);
     showAuthOverlay();
     _loaded = {};
     document.getElementById('modelBody').innerHTML = '';
@@ -1705,11 +1797,19 @@ async function api(method, path, body, base) {
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch((base || API_BASE) + path, opts);
     if (res.status === 401) {
+        _adminToken = null;
+        localStorage.removeItem(STORAGE_KEY);
+        saveIdentity(null);
         showAuthOverlay();
         throw new Error('Unauthorized');
     }
     if (res.status === 403) {
-        toast('当前账号无管理员权限', false);
+        let detail = '当前角色无权执行该操作';
+        try {
+            const errBody = await res.json();
+            if (errBody?.detail) detail = errBody.detail;
+        } catch (e) { /* 忽略解析失败 */ }
+        toast(detail, false);
         throw new Error('Forbidden');
     }
     return res.json();
@@ -1967,7 +2067,8 @@ function switchEnv(envKey) {
     hideProjectDetail();
     if (checkAuth()) {
         preloadProviders();
-        loadCurrentSection(true);
+        // 先确认当前账号的角色，再按权限渲染列表
+        refreshIdentity().finally(() => loadCurrentSection(true));
     }
 }
 
@@ -2267,22 +2368,33 @@ function renderProviders(list) {
         tbody.innerHTML = '<tr><td colspan="7"><div class="empty">暂无提供商，请先新增一个</div></td></tr>';
         return;
     }
-    tbody.innerHTML = list.map(p => `
+    tbody.innerHTML = list.map(p => {
+        const keyCell = p.apiKey
+            ? `<span class="mono muted" style="font-size:12px">${esc(maskKey(p.apiKey))}</span>`
+            : (p.apiKeySet
+                ? '<span class="tag tag-gray" title="当前角色无权查看上游密钥">已隐藏</span>'
+                : '<span class="muted">-</span>');
+        const actions = [
+            can('providers:write')
+                ? `<button class="btn btn-link btn-sm" onclick="openProviderModal('${esc(p.providerId)}')">编辑</button>`
+                : '',
+            can('providers:delete')
+                ? `<button class="btn btn-link danger btn-sm" onclick="deleteProvider('${esc(p.providerId)}', '${esc(p.providerName)}')">删除</button>`
+                : ''
+        ].join('') || '<span class="muted">-</span>';
+        return `
         <tr>
             <td><strong>${esc(p.providerName)}</strong></td>
             <td><span class="ellipsis mono muted" title="${esc(p.apiUrl)}">${esc(p.apiUrl)}</span></td>
-            <td><span class="mono muted" style="font-size:12px">${esc(maskKey(p.apiKey))}</span></td>
+            <td>${keyCell}</td>
             <td>${p.modelCount ? `<span class="tag tag-blue">${p.modelCount} 个</span>` : '<span class="tag tag-gray">0 个</span>'}</td>
             <td><span class="ellipsis muted" title="${esc(p.remarks)}">${esc(p.remarks || '-')}</span></td>
             <td class="muted num" style="white-space:nowrap">${esc(fmtDateTime(p.updatedAt || p.createdAt))}</td>
             <td>
-                <div class="actions" style="justify-content:flex-end">
-                    <button class="btn btn-link btn-sm" onclick="openProviderModal('${esc(p.providerId)}')">编辑</button>
-                    <button class="btn btn-link danger btn-sm" onclick="deleteProvider('${esc(p.providerId)}', '${esc(p.providerName)}')">删除</button>
-                </div>
+                <div class="actions" style="justify-content:flex-end">${actions}</div>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
 }
 
 function openProviderModal(providerId) {
@@ -2522,17 +2634,27 @@ function modelRowHtml(m) {
     const providerCell = m.providerId
         ? `<span class="tag tag-blue">${esc(providerName)}</span>`
         : `<span class="tag tag-gray" title="历史数据未关联提供商">${esc(providerName || '未关联')}</span>`;
+    const usingCell = can('models:write')
+        ? `<label class="toggle" onclick="toggleUsing('${esc(m.aiModelId)}', this, event)">
+                <input type="checkbox" ${m.isUsing === '1' ? 'checked' : ''}>
+                <span class="toggle-track"></span>
+           </label>`
+        : (m.isUsing === '1' ? '<span class="tag tag-green">使用中</span>' : '<span class="tag tag-gray">未使用</span>');
+    const actions = [
+        can('models:write')
+            ? `<button class="btn btn-link btn-sm" onclick="copyModel(this, '${esc(m.aiModelId)}')">复制</button>
+               <button class="btn btn-link btn-sm" onclick="openModelModal('${esc(m.aiModelId)}')">编辑</button>`
+            : '',
+        can('models:delete')
+            ? `<button class="btn btn-link danger btn-sm" onclick="deleteModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>`
+            : ''
+    ].join('') || '<span class="muted">-</span>';
     return `
         <tr data-model-id="${esc(m.aiModelId)}">
             <td><span class="ellipsis" title="${esc(m.aiModelName)}"><strong>${esc(m.aiModelName)}</strong></span></td>
             <td>${providerCell}</td>
             <td>${m.aiModelType === '1' ? '<span class="tag tag-orange">语音</span>' : '<span class="tag tag-purple">文本</span>'}</td>
-            <td>
-                <label class="toggle" onclick="toggleUsing('${esc(m.aiModelId)}', this, event)">
-                    <input type="checkbox" ${m.isUsing === '1' ? 'checked' : ''}>
-                    <span class="toggle-track"></span>
-                </label>
-            </td>
+            <td>${usingCell}</td>
             <td>${thinkTag(m.isThink)}</td>
             <td>${m.isStream === '1' ? '<span class="tag tag-green">是</span>' : '<span class="tag tag-gray">否</span>'}</td>
             <td>${clusterTag(m.asyncType)}</td>
@@ -2541,11 +2663,7 @@ function modelRowHtml(m) {
             <td>${providerTag(m.extraConfig)}</td>
             <td><span class="ellipsis muted" title="${esc(m.remarks)}">${esc(m.remarks || '-')}</span></td>
             <td>
-                <div class="actions" style="justify-content:flex-end">
-                    <button class="btn btn-link btn-sm" onclick="copyModel(this, '${esc(m.aiModelId)}')">复制</button>
-                    <button class="btn btn-link btn-sm" onclick="openModelModal('${esc(m.aiModelId)}')">编辑</button>
-                    <button class="btn btn-link danger btn-sm" onclick="deleteModel('${esc(m.aiModelId)}', '${esc(m.aiModelName)}')">删除</button>
-                </div>
+                <div class="actions" style="justify-content:flex-end">${actions}</div>
             </td>
         </tr>`;
 }
@@ -3185,7 +3303,7 @@ function renderProjects() {
                 <td class="num">${fmt(p.tokenCount)}</td>
                 <td style="text-align:right">
                     <button class="btn btn-ghost btn-sm" onclick="selectProject('${p.projectId}')">管理</button>
-                    <button class="btn btn-ghost btn-sm" onclick="openProjectModal('${p.projectId}')">编辑</button>
+                    ${can('projects:write') ? `<button class="btn btn-ghost btn-sm" onclick="openProjectModal('${p.projectId}')">编辑</button>` : ''}
                 </td>
             </tr>`;
     }).join('');
@@ -3306,8 +3424,10 @@ function renderProjectTokens() {
                 <td>${fmtDateTime(tk.lastUsedAt)}</td>
                 <td>${fmtDateTime(tk.expiresAt)}</td>
                 <td style="text-align:right">
-                    <button class="btn btn-ghost btn-sm" onclick="rotateProjectToken('${tk.tokenId}', '${esc(tk.name)}')">轮换</button>
-                    <button class="btn btn-ghost btn-sm" onclick="revokeProjectToken('${tk.tokenId}', '${esc(tk.name)}')">吊销</button>
+                    ${can('tokens:write') ? `
+                        <button class="btn btn-ghost btn-sm" onclick="rotateProjectToken('${tk.tokenId}', '${esc(tk.name)}')">轮换</button>
+                        <button class="btn btn-ghost btn-sm" onclick="revokeProjectToken('${tk.tokenId}', '${esc(tk.name)}')">吊销</button>
+                    ` : '<span class="muted">-</span>'}
                 </td>
             </tr>`;
     }).join('');
@@ -3585,6 +3705,8 @@ function routingOptions(current) {
 
 function renderHealth() {
     const data = _healthData || {};
+    const canWrite = can('health:write');
+    const ro = canWrite ? '' : 'disabled';
     document.getElementById('healthUpdatedAt').textContent =
         data.generatedAt ? '更新于 ' + fmtDateTime(data.generatedAt) : '';
 
@@ -3609,16 +3731,16 @@ function renderHealth() {
         ? routing.map(r => `
             <tr>
                 <td><code>${esc(r.asyncType)}</code></td>
-                <td><select class="select" id="routeStrategy-${r.asyncType}">${routingOptions(r.strategy)}</select></td>
-                <td><input class="input route-input" id="routeRetry-${r.asyncType}" type="number" min="0" max="2" value="${r.retryMax}"></td>
-                <td><input class="input route-input" id="routeThreshold-${r.asyncType}" type="number" min="1" max="100" value="${r.failureThreshold}"></td>
-                <td><input class="input route-input" id="routeCooldown-${r.asyncType}" type="number" min="0" max="3600" value="${r.cooldownSeconds}"></td>
-                <td><input class="input route-input" id="routeRatio-${r.asyncType}" type="number" min="0" max="1" step="0.05" value="${r.outputRatio}"></td>
-                <td><select class="select" id="routeEnabled-${r.asyncType}">
+                <td><select class="select" id="routeStrategy-${r.asyncType}" ${ro}>${routingOptions(r.strategy)}</select></td>
+                <td><input class="input route-input" id="routeRetry-${r.asyncType}" type="number" min="0" max="2" value="${r.retryMax}" ${ro}></td>
+                <td><input class="input route-input" id="routeThreshold-${r.asyncType}" type="number" min="1" max="100" value="${r.failureThreshold}" ${ro}></td>
+                <td><input class="input route-input" id="routeCooldown-${r.asyncType}" type="number" min="0" max="3600" value="${r.cooldownSeconds}" ${ro}></td>
+                <td><input class="input route-input" id="routeRatio-${r.asyncType}" type="number" min="0" max="1" step="0.05" value="${r.outputRatio}" ${ro}></td>
+                <td><select class="select" id="routeEnabled-${r.asyncType}" ${ro}>
                     <option value="1" ${Number(r.enabled) === 1 ? 'selected' : ''}>启用</option>
                     <option value="0" ${Number(r.enabled) === 0 ? 'selected' : ''}>禁用</option>
                 </select></td>
-                <td style="text-align:right"><button class="btn btn-primary btn-sm" onclick="saveRouting('${r.asyncType}')">保存</button></td>
+                <td style="text-align:right">${canWrite ? `<button class="btn btn-primary btn-sm" onclick="saveRouting('${r.asyncType}')">保存</button>` : '<span class="muted">-</span>'}</td>
             </tr>`).join('')
         : '<tr><td colspan="8"><div class="empty">暂无配置</div></td></tr>';
 
@@ -3636,7 +3758,7 @@ function renderHealth() {
                 <td class="num">${c.avgLatencyMs === null || c.avgLatencyMs === undefined ? '-' : Math.round(Number(c.avgLatencyMs)) + ' ms'}</td>
                 <td class="num">${fmt(c.consecutiveFailures)}</td>
                 <td><span class="ellipsis" title="${esc(c.lastError || '')}">${esc(c.lastError || '-')}</span></td>
-                <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="resetChannel('${c.modelId}', '${esc(c.modelName)}')">重置</button></td>
+                <td style="text-align:right">${canWrite ? `<button class="btn btn-ghost btn-sm" onclick="resetChannel('${c.modelId}', '${esc(c.modelName)}')">重置</button>` : '<span class="muted">-</span>'}</td>
             </tr>`).join('')
         : '<tr><td colspan="9"><div class="empty">暂无启用中的模型</div></td></tr>';
 }
@@ -3681,7 +3803,7 @@ async function resetChannel(modelId, modelName) {
 renderEnvironments();
 if (checkAuth()) {
     preloadProviders();
-    loadCurrentSection();
+    refreshIdentity().finally(() => loadCurrentSection());
 }
 </script>
 </body>

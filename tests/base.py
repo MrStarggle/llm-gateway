@@ -12,6 +12,7 @@ os.environ["DB_BACKEND"] = "sqlite"
 os.environ["SQLITE_PATH"] = str(TEST_DB)
 os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "testpass"
+os.environ["ADMIN_USERS"] = ""  # 测试不读取本地 .env 的多账号配置
 os.environ["JWT_SECRET_KEY"] = "test-secret"
 os.environ["GATEWAY_TOKEN_REQUIRED"] = "0"
 os.environ["USAGE_RETENTION_DAYS"] = "0"

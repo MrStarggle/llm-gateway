@@ -190,7 +190,8 @@ python -m unittest discover -s tests -v
 | `SQLITE_PATH` | SQLite 数据文件路径 | `data/gateway.db` |
 | `DATABASE_URL` | 显式 SQLAlchemy 异步连接串，优先级最高 | 空 |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL 连接（`DB_BACKEND=mysql` 时使用） | localhost / 3306 / root / 空 / `llm_gateway` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理台登录账号（明文保存在 env，单管理员） | `admin` / `admin` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 旧版单管理员账号（明文保存在 env，固定 admin 角色） | `admin` / `admin` |
+| `ADMIN_USERS` | 多账号 + 角色（JSON），角色可选 `admin` / `operator` / `developer` / `viewer` | 空 |
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产必须修改 | 代码默认 `dev-only-change-me`；示例文件里是占位符 |
 | `HOST` | `start.sh` / `start.bat` 的监听地址 | `127.0.0.1` |
 | `PORT` | `start.sh` / `start.bat` 与 `python main.py` 使用的端口；Docker 使用 compose 端口映射 | `9010` |
@@ -199,19 +200,32 @@ python -m unittest discover -s tests -v
 | `USAGE_RETENTION_DAYS` | 原始调用明细保留天数；`0` 不清理 | `90` |
 | `CORS_ORIGINS` | 跨域管理台来源，逗号分隔 | 空（同源即可） |
 
-### 管理员账号
+### 管理员账号与角色
 
-开源版没有用户表，只有一组环境变量管理员账号：
+没有用户表，账号来自环境变量，两种写法可同时使用：
 
 ```bash
+# 旧版单管理员，固定为 admin 角色
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin
+# 多账号 + 角色（JSON，可选）；值写成字符串时等价于只提供密码
+ADMIN_USERS={"alice": {"password": "s3cret", "role": "admin"}, "bob": {"password": "s3cret", "role": "developer"}}
 JWT_SECRET_KEY=change-me-to-a-long-random-string
 ```
 
-- 改账号/密码：修改 `.env` 后**重启服务**，已签发的 JWT 在过期前仍然有效（默认 7 天）
+内置四个角色：
+
+| 角色 | 权限 |
+|---|---|
+| `admin` 管理员 | 全部权限，含删除提供商、查看上游 API Key |
+| `operator` 运维 | 模型/提供商/项目/渠道/路由的读写；不可删除提供商；可查看上游 Key |
+| `developer` 开发者 | 只读 + 项目 API Key 的创建、轮换、吊销 |
+| `viewer` 只读 | 只读；上游 API Key 一律不下发 |
+
+- 改账号/密码/角色：修改 `.env` 后**重启服务**；角色以账号表为准逐请求解析，重启后立即生效，无需等 JWT 过期
+- 从 `ADMIN_USERS` 移除账号：该账号的 token 立即失效（接口返回 401）
 - 改 `JWT_SECRET_KEY`：所有已签发 token 立即失效
-- 没有注册、找回密码、多用户；需要这些能力就按「接入自有用户体系」替换鉴权层
+- 没有注册、找回密码；多账号需自行维护 env。需要接入自有用户体系时按「接入自有用户体系」替换鉴权层
 - 默认 `admin / admin` 仅适合本机；对局域网或公网开放前必须修改
 
 ### SQLite 数据与备份
@@ -266,15 +280,18 @@ SQLite 和 MySQL 之间没有自动数据迁移；切换前需要自己导出/�
 
 ### 接入自有用户体系
 
-开源版默认是单管理员模式：`app/api/v1/controller/auth_controller.py` 用 env 中的
-`ADMIN_USERNAME` / `ADMIN_PASSWORD` 校验并签发 JWT，全程不查用户表。
+开源版把账号放在环境变量里：`app/api/v1/controller/auth_controller.py` 用
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` 和可选的 `ADMIN_USERS` 校验并签发 JWT，角色由
+`app/utils/rbac.py` 解析，全程不查用户表。
 
-如果要接入你自己的用户表/OAuth/SSO，只需要替换两处：
+如果要接入你自己的用户表/OAuth/SSO，替换这几处：
 
-- `auth_controller.py`：登录接口改为校验你自己的用户
-- `admin_auth.verify_admin_token`：改为校验你的 token（或复用同一套 JWT）
+- `auth_controller.py` / `admin_auth.authenticate`：登录接口改为校验你自己的用户
+- `admin_auth.verify_admin_token`：从你的 token 中还原 `AdminIdentity`（用户名 + 角色）
+- `app/utils/rbac.py`：把你的角色映射到内置四角色，或直接扩展权限矩阵
 
-管理接口统一通过 `Depends(verify_admin_token)` 鉴权，替换这一层即可。
+管理接口通过 `Depends(verify_admin_token)` + 每接口的 `Depends(require_permission(...))`
+鉴权，替换这一层即可。
 
 ## 调用
 

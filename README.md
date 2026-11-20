@@ -204,7 +204,8 @@ You can also install `requirements-dev.txt` and run them with pytest.
 | `SQLITE_PATH` | SQLite data file path | `data/gateway.db` |
 | `DATABASE_URL` | Explicit SQLAlchemy async URL (highest priority) | empty |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL connection settings (used when `DB_BACKEND=mysql`) | localhost / 3306 / root / empty / `llm_gateway` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin console credentials (stored in plaintext in the env, single-admin) | `admin` / `admin` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Legacy single-admin credentials (stored in plaintext in the env, fixed to the `admin` role) | `admin` / `admin` |
+| `ADMIN_USERS` | Multi-account + roles as JSON; each account is `admin` / `operator` / `developer` / `viewer` | empty |
 | `JWT_SECRET_KEY` | JWT signing key; must be changed in production | code default `dev-only-change-me`; the example file uses a placeholder |
 | `HOST` | Bind address used by `start.sh` / `start.bat` | `127.0.0.1` |
 | `PORT` | Port used by `start.sh` / `start.bat` and `python main.py`; Docker uses the compose port mapping | `9010` |
@@ -213,19 +214,32 @@ You can also install `requirements-dev.txt` and run them with pytest.
 | `USAGE_RETENTION_DAYS` | Days to keep raw call records; `0` disables cleanup | `90` |
 | `CORS_ORIGINS` | Allowed origins for the admin console, comma-separated | empty (same-origin is enough) |
 
-### Admin account
+### Admin accounts and roles
 
-The open-source edition has no user table; it uses one admin account from environment variables:
+There is no user table; accounts come from environment variables. Two forms can be combined:
 
 ```bash
+# Legacy single admin, fixed to the admin role
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin
+# Optional multi-account + roles (JSON). A plain string value means "password only"
+ADMIN_USERS={"alice": {"password": "s3cret", "role": "admin"}, "bob": {"password": "s3cret", "role": "developer"}}
 JWT_SECRET_KEY=change-me-to-a-long-random-string
 ```
 
-- Changing the username/password requires a **service restart**; already-issued JWTs remain valid until they expire (7 days by default)
+Built-in roles:
+
+| Role | Permissions |
+|---|---|
+| `admin` | Everything, including deleting providers and viewing upstream API keys |
+| `operator` | Read/write models, providers, projects, channels and routing; cannot delete providers; can view upstream keys |
+| `developer` | Read-only + create/rotate/revoke project API tokens |
+| `viewer` | Read-only; upstream API keys are never returned |
+
+- Changing accounts, passwords, or roles requires a **service restart**; roles are re-resolved from the account table on every request, so a restart takes effect immediately even for already-issued JWTs
+- Removing an account makes its tokens fail immediately (401)
 - Changing `JWT_SECRET_KEY` invalidates every issued token immediately
-- There is no sign-up, password recovery, or multi-user support. To add them, replace the auth layer as described in "Integrating your own user system"
+- There is no sign-up or password recovery; manage accounts in the env. To plug in your own user system, replace the auth layer as described in "Integrating your own user system"
 - The default `admin / admin` is for local use only; change it before exposing the service to a LAN or the internet
 
 ### SQLite data and backups
@@ -280,16 +294,18 @@ There is no automatic data migration between SQLite and MySQL; export/import man
 
 ### Integrating your own user system
 
-The open-source edition defaults to single-admin mode: `app/api/v1/controller/auth_controller.py`
-validates `ADMIN_USERNAME` / `ADMIN_PASSWORD` from the environment and issues a JWT. It never
-queries a user table.
+The open-source edition keeps accounts in the environment: `app/api/v1/controller/auth_controller.py`
+authenticates against `ADMIN_USERNAME` / `ADMIN_PASSWORD` and optional `ADMIN_USERS`, then issues a JWT
+whose role is resolved by `app/utils/rbac.py`. It never queries a user table.
 
-To plug in your own user table, OAuth, or SSO, replace two places:
+To plug in your own user table, OAuth, or SSO, replace these places:
 
-- `auth_controller.py`: validate your own users in the login endpoint
-- `admin_auth.verify_admin_token`: validate your own token (or reuse the same JWT)
+- `auth_controller.py` / `admin_auth.authenticate`: validate your own users in the login endpoint
+- `admin_auth.verify_admin_token`: return an `AdminIdentity` (username + role) from your token
+- `app/utils/rbac.py`: map your roles onto the four built-in roles, or extend the permission matrix
 
-Admin endpoints are all guarded by `Depends(verify_admin_token)`, so replacing this layer is enough.
+Admin endpoints are guarded by `Depends(verify_admin_token)` plus a per-route
+`Depends(require_permission(...))`, so replacing this layer is enough.
 
 ## Calling the gateway
 
